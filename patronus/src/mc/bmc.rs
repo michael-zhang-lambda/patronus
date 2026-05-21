@@ -102,11 +102,14 @@ pub fn bmc(
     Ok(ModelCheckResult::Success)
 }
 
-pub(crate) fn start_bmc_or_pdr(
+pub(crate) fn start_bmc_or_pdr<S: SolverContext>(
     ctx: &mut Context,
-    smt_ctx: &mut impl SolverContext,
+    smt_ctx: &mut S,
     sys: &TransitionSystem,
-) -> Result<(ModelCheckResult, Option<UnrollSmtEncoding>)> {
+) -> Result<(
+    ModelCheckResult,
+    Option<impl TransitionSystemEncoding + use<S>>,
+)> {
     // if there are no assertions, there cannot be an error!
     if sys.bad_states.is_empty() {
         return Ok((ModelCheckResult::Success, None));
