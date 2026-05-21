@@ -269,6 +269,7 @@ impl SmtLibSolverCtx {
         match response {
             "sat" => Ok(CheckSatResponse::Sat),
             "unsat" => Ok(CheckSatResponse::Unsat),
+            "unknown" => Ok(CheckSatResponse::Unknown),
             other => Err(Error::UnexpectedResponse(
                 self.name.clone(),
                 other.to_string(),
