@@ -164,6 +164,9 @@ fn cube_from_state_values(
     sys: &TransitionSystem,
     state_values: &[Value],
 ) -> Cube {
+    // Make sure that all states are mapped to values
+    debug_assert!(sys.states.len() == state_values.len());
+
     let mut literals = Vec::with_capacity(sys.states.len());
     for (s, val) in sys.states.iter().zip(state_values.iter()) {
         let val_expr = ctx.lit(val);
@@ -187,6 +190,27 @@ fn query(
 // PDR subroutines
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Check whether SMT expression holds and return `SAT` counterexample, `UNSAT`, or `UNKNOWN`
+#[inline]
+fn query_and_result(
+    ctx: &mut Context,
+    smt_ctx: &mut impl SolverContext,
+    enc: &impl TransitionSystemEncoding,
+    sys: &TransitionSystem,
+    assumptions: Vec<ExprRef>
+) -> Result<QueryResult<(Cube, CexEntry)>> {
+    match query(ctx, smt_ctx, assumptions)? {
+        CheckSatResponse::Sat => {
+            let state_values = extract_state_values(ctx, smt_ctx, enc, sys, STEP_CUR)?;
+            let inputs = extract_input_values(ctx, smt_ctx, enc, sys, STEP_CUR)?;
+            let cube = cube_from_state_values(ctx, sys, &state_values);
+            Ok(QueryResult::Sat((cube, CexEntry { state_values, inputs })))
+        }
+        CheckSatResponse::Unsat => Ok(QueryResult::Unsat),
+        CheckSatResponse::Unknown => Ok(QueryResult::Unknown),
+    }
+}
+
 /// Check SAT(F[frame_idx]@CUR ∧ Bad@CUR). On SAT, extract a bad predecessor cube.
 fn find_bad_cube(
     ctx: &mut Context,
@@ -204,16 +228,7 @@ fn find_bad_cube(
     }
     assumptions.push(bad_cur);
 
-    match query(ctx, smt_ctx, assumptions)? {
-        CheckSatResponse::Sat => {
-            let state_values = extract_state_values(ctx, smt_ctx, enc, sys, STEP_CUR)?;
-            let inputs = extract_input_values(ctx, smt_ctx, enc, sys, STEP_CUR)?;
-            let cube = cube_from_state_values(ctx, sys, &state_values);
-            Ok(QueryResult::Sat((cube, CexEntry { state_values, inputs })))
-        }
-        CheckSatResponse::Unsat => Ok(QueryResult::Unsat),
-        CheckSatResponse::Unknown => Ok(QueryResult::Unknown),
-    }
+    query_and_result(ctx, smt_ctx, enc, sys, assumptions)
 }
 
 /// Check SAT(F[frame_idx]@CUR ∧ ¬cube@CUR ∧ cube@NXT).
@@ -233,16 +248,7 @@ fn predecessor_check(
     let cube_expr = cube.to_expr(ctx);
     assumptions.push(expr_at_step(ctx, enc, cube_expr, STEP_NXT));
 
-    match query(ctx, smt_ctx, assumptions)? {
-        CheckSatResponse::Sat => {
-            let state_values = extract_state_values(ctx, smt_ctx, enc, sys, STEP_CUR)?;
-            let inputs = extract_input_values(ctx, smt_ctx, enc, sys, STEP_CUR)?;
-            let pred_cube = cube_from_state_values(ctx, sys, &state_values);
-            Ok(QueryResult::Sat((pred_cube, CexEntry { state_values, inputs })))
-        }
-        CheckSatResponse::Unsat => Ok(QueryResult::Unsat),
-        CheckSatResponse::Unknown => Ok(QueryResult::Unknown),
-    }
+    query_and_result(ctx, smt_ctx, enc, sys, assumptions)
 }
 
 /// Check SAT(F[frame_idx]@CUR ∧ ¬cube@CUR ∧ cube@NXT) without model extraction.
@@ -489,7 +495,7 @@ fn make_witness(ctx: &mut Context, sys: &TransitionSystem, chain: Vec<CexEntry>)
 // Public entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Runs PDR/IC3.
+/// Runs PDR/IC3 for a maximum of `MAX_FRAMES` frames
 pub fn pdr(
     ctx: &mut Context,
     smt_ctx: &mut impl SolverContext,
