@@ -343,12 +343,14 @@ fn propagate_clauses(
         }
 
         // Fixpoint: every clause of F[fi] is also in F[fi+1].
-        if !frames[fi].clauses.is_empty() {
-            let fi1_set: std::collections::HashSet<ExprRef> =
-                frames[fi + 1].clauses.iter().copied().collect();
-            if frames[fi].clauses.iter().all(|cl| fi1_set.contains(cl)) {
-                return Ok(QueryResult::Sat(fi));
-            }
+        // Works correctly for empty frames too: add_blocking_clause(up_to=k) writes to
+        // frames[1..=k], so frames[k+1].clauses ⊆ frames[k].clauses always holds. If
+        // frames[k] is empty then frames[k+1] is also empty, and the vacuous .all()
+        // correctly detects the fixpoint (constraints alone exclude all bad states).
+        let fi1_set: std::collections::HashSet<ExprRef> =
+            frames[fi + 1].clauses.iter().copied().collect();
+        if frames[fi].clauses.iter().all(|cl| fi1_set.contains(cl)) {
+            return Ok(QueryResult::Sat(fi));
         }
     }
     Ok(QueryResult::Unsat)

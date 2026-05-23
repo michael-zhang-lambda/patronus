@@ -87,8 +87,9 @@ fn quiz1_unsat_pdr_success() {
     }
     let res = run_pdr_file("../inputs/chiseltest/Quiz1.unsat.btor");
     assert!(
-        matches!(res, ModelCheckResult::Success | ModelCheckResult::Unknown),
-        "Expected Success (or Unknown) for Quiz1.unsat"
+        matches!(res, ModelCheckResult::Success),
+        "Expected Success (or Unknown) for Quiz1.unsat, got {:?}",
+        res
     );
 }
 
@@ -141,8 +142,11 @@ fn check_pdr_bmc_agree(pdr_res: ModelCheckResult, bmc_res: ModelCheckResult, lab
         (ModelCheckResult::Fail(_), ModelCheckResult::Success) => {
             panic!("{label}: PDR found a counterexample but BMC says safe");
         }
-        // Unknown from either is acceptable.
-        _ => {}
+        (ModelCheckResult::Unknown, ModelCheckResult::Unknown) => {
+            ()
+        }
+        // Unknown from BMC XOR PDR is unacceptable.
+        _ => panic!("Unknown result")
     }
 }
 
