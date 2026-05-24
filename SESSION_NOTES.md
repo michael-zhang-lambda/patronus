@@ -149,9 +149,92 @@ Three fixtures cover distinct CEX shapes:
 
 - IC3IA: the subroutines already take a `state_vars: &[ExprRef]` style — a different
   driver could supply abstract predicate symbols and reuse `predecessor_check`,
-  `generalize`, `block_cube`, `propagate_clauses` unchanged.
+  `exctg_generalize`, `block_cube`, `propagate_clauses` unchanged.
 - Witness validation for array states: `sim.set()` only handles BitVec; array init values
   are currently left to `sim.init`'s default (zero). Needs a way to override array state
   through the `Simulator` trait or a lower-level API.
-- Performance: UNSAT-core-based generalization instead of linear literal dropping.
-- Larger benchmarks: run against `inputs/chiseltest/Quiz2_*.btor` and compare with BMC.
+- DynAMic (Algorithm 5, arXiv:2501.02480v1): dynamically select Standard/CTG/EXCTG per
+  bad-state difficulty using an activity counter; thresholds CTG_TH=10, EXCTG_TH=40.
+- UNSAT-core-based generalization to replace the greedy linear literal-dropping loop.
+
+---
+
+## Session 3 — EXCTG generalization + bit-level cubes
+
+### Root cause diagnosis
+
+`pdr()` was returning `Unknown` on Quiz2/Quiz4 BMC-comparison tests via **MAX_FRAMES
+exhaustion** (pdr.rs loop at the time, now preserved), not a solver issue. BITWUZLA has no
+timeout configured; the solver is complete on these small `QF_BV` formulas. Confirmed
+empirically: `pdr_bmc_agree_quiz2_pass` churned ~8s of SAT queries before hitting the limit.
+
+**Mechanism:** all four designs (Quiz2.{sat,unsat}, Quiz4.{sat,unsat}) carry a 16-bit
+`counter` state. The old `cube_from_state_values` encoded each state as one whole-word
+equality literal (`counter = 0x0005`). The old `generalize` could only drop that literal
+atomically — dropping the sole constraint on a 16-bit register is never relatively
+inductive. PDR blocked concrete counter values one-at-a-time, needing up to ~2¹⁷ lemmas
+while `MAX_FRAMES = 1000`. Whole-word cubes cannot represent the range invariants
+(e.g., `counter < 4`) needed to converge.
+
+### Changes
+
+**1. Bit-level cube representation** (`cube_from_state_values`, pdr.rs:170)
+
+Each BitVec state now contributes one literal **per bit**: `slice(sym, j, j) = bit_j`
+(using `baa::BitVecOps::is_bit_set` for LSB-0 bit access and `ctx.slice`/`ctx.bit_vec_val`
+for the SMT expression). Array states are skipped. This is the foundational change — without
+it, EXCTG would not converge on wide-counter designs.
+
+**2. EXCTG generalization** (`exctg_generalize` / `exctg_down` / `exctg_block`, pdr.rs:~330)
+
+Replaced the old greedy literal-dropping `generalize` with the three-function EXCTG
+algorithm from Su et al., arXiv:2501.02480v1, Algorithm 4. Parameters:
+`CTG_MAX=3`, `CTG_LV=1`, `EXCTG_LIMIT=5`.
+
+Key functions:
+- `relind_check` — like old `is_inductive_relative` but returns the predecessor cube
+  (bit-level, from the SAT model) on failure, needed by the down/CTG/EXCTG loop.
+- `cube_intersect(a, b)` — set intersection of ExprRefs (works because interned literals
+  are unique per value); implements the `c := c ∩ p` fallback in `exctg_down`.
+- `init_intersects` — checks `SAT(Init ∧ cube)`, guarding against blocking initial states.
+  An empty cube (`to_expr()` = True) returns true here, preventing empty-cube blocking.
+- `exctg_block(c, i, limit&, cl)` — the "extended" part: recursively blocks the
+  predecessor chain of c, sharing a budget `limit` (decremented by ref). Returns false
+  when `limit` is exhausted or a predecessor hits Init.
+- `exctg_down(c, i, cl)` — the core loop: checks relind, tries CTG-blocking (up to
+  CTG_MAX attempts), falls back to `c := c ∩ p` when the CTG budget is exhausted.
+- `exctg_generalize(c, i, cl)` — iterates over literals, attempting to drop each via
+  `exctg_down`. Uses the returned (possibly further minimized) cube.
+
+Two transcription quirks resolved vs. the PDF: (a) `exctg_block`'s success branch
+generalizes `c` (not `p` as printed — typo in the paper); (b) `limit` is decremented
+shared across the recursion subtree (consistent with Algorithm 4's intent).
+
+### Test results (all 16 pass)
+
+| Test | Result |
+|---|---|
+| `delay_btor_pdr_success` | ✓ Success |
+| `swap_btor_pdr_success` | ✓ Success |
+| `quiz1_unsat_pdr_success` | ✓ Success |
+| `count2_pdr_fail` | ✓ Fail |
+| `count2_pdr_witness_nonempty` | ✓ Fail, ≥7 steps |
+| `pdr_bmc_agree_count2` | ✓ agree |
+| `pdr_bmc_agree_delay` | ✓ agree |
+| `pdr_bmc_agree_swap` | ✓ agree |
+| `pdr_bmc_agree_quiz1_pass` | ✓ agree |
+| `pdr_bmc_agree_quiz2_pass` | ✓ agree (was: Unknown) |
+| `pdr_bmc_agree_quiz2_fail` | ✓ agree (was: Unknown) |
+| `pdr_bmc_agree_quiz4_pass` | ✓ agree (was: Unknown) |
+| `pdr_bmc_agree_quiz4_fail` | ✓ agree (was: Unknown) |
+| `starts_bad_pdr_witness_valid` | ✓ 0-step CEX validated |
+| `count2_pdr_witness_valid` | ✓ 7-step CEX validated |
+| `trigger_bad_pdr_witness_valid` | ✓ 1-step CEX with inputs validated |
+
+Total runtime: 0.83s (vs ~8s per failing test before).
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `patronus/src/mc/pdr.rs` | Bit-level cubes; `cube_intersect`, `init_intersects`, `relind_check`; EXCTG: `exctg_generalize`/`exctg_down`/`exctg_block`; `CTG_MAX`/`CTG_LV`/`EXCTG_LIMIT` consts; updated `block_cube` call sites |

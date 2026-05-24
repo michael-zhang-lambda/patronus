@@ -21,11 +21,21 @@ const STEP_NXT: u64 = 2;
 
 const MAX_FRAMES: usize = 1000;
 
+// EXCTG parameters (Su et al., arXiv:2501.02480v1, §V-A defaults).
+// EXCTG subsumes Standard (CTG_LV=0) and CTG (EXCTG_LIMIT=1) as special cases.
+const CTG_MAX: usize = 3; // max CTG-blocking attempts per exctg_down loop
+const CTG_LV: usize = 1; // max generalization recursion depth
+const EXCTG_LIMIT: usize = 5; // predecessor-chain budget per exctg_block subtree
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Core data structures
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A conjunction of literals over the original (un-stepped) state symbols.
+///
+/// Literals are single-bit equalities: `slice(sym, j, j) = bit`, one per state bit.
+/// Interning guarantees that two structurally equal literals share the same ExprRef,
+/// so set operations (intersection, membership) work directly on ExprRef values.
 #[derive(Clone, Debug, Default)]
 struct Cube {
     literals: Vec<ExprRef>,
@@ -79,7 +89,6 @@ enum QueryResult<T> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Maps every symbol in `expr` (over original symbols) to its stepped counterpart.
-/// Literals and other non-symbol sub-expressions are left unchanged.
 fn expr_at_step(
     ctx: &mut Context,
     enc: &impl TransitionSystemEncoding,
@@ -97,11 +106,8 @@ fn expr_at_step(
 
 /// Collect frame clauses stepped to `step` as a flat Vec of assumptions.
 ///
-/// frames[0] holds Init constraints and is only included when up_to == 0
-/// (for Init-level queries such as the 0-step CEX check and predecessor checks
-/// against Init). For frames 1..=k, only the blocking clauses learned at those
-/// levels are included — NOT Init — because each F_k over-approximates k-step
-/// reachable states independently of the initial state set.
+/// frames[0] holds Init constraints and is only included when up_to == 0.
+/// For frames 1..=k, only the blocking clauses learned at those levels are included.
 fn frame_assumptions(
     ctx: &mut Context,
     enc: &impl TransitionSystemEncoding,
@@ -112,12 +118,8 @@ fn frame_assumptions(
     // Use ONLY frames[up_to] (not the union of frames[1..=up_to]).
     //
     // add_blocking_clause(up_to=k) writes a clause into every frame 1..=k, so
-    // frames[k] already contains exactly the clauses that are valid at depth k.
-    // Unioning frames[1..=k] would double-count and, worse, would make F[k] a
-    // subset of F[k-1] — inverting the required nesting F[k-1] ⊆ F[k].
-    //
-    // The Init frame (frames[0]) is a special case: it is only included when
-    // up_to == 0, i.e. for queries that must be anchored to the initial states.
+    // frames[k] already contains exactly the clauses valid at depth k.
+    // Unioning frames[1..=k] would double-count and invert the F[k-1] ⊆ F[k] nesting.
     let frame = &frames[up_to];
     frame
         .clauses
@@ -158,20 +160,46 @@ fn extract_input_values(
     Ok(out)
 }
 
-/// Build a cube as `sym = val` literals for all states, stored over original symbols.
+/// Build a bit-level cube from concrete state values.
+///
+/// Each BitVec state contributes one literal per bit: `slice(sym, j, j) = bit_j`.
+/// Array states are skipped (no natural bit-level encoding).
+/// Using one literal per bit (rather than one whole-word equality) is essential for
+/// generalization: dropping a bit literal turns that bit into a "don't care", allowing
+/// IC3 to learn range-style invariants like `counter < 4`.
 fn cube_from_state_values(
     ctx: &mut Context,
     sys: &TransitionSystem,
     state_values: &[Value],
 ) -> Cube {
-    // Make sure that all states are mapped to values
-    debug_assert!(sys.states.len() == state_values.len());
-
-    let mut literals = Vec::with_capacity(sys.states.len());
+    debug_assert_eq!(sys.states.len(), state_values.len());
+    let mut literals = Vec::new();
     for (s, val) in sys.states.iter().zip(state_values.iter()) {
-        let val_expr = ctx.lit(val);
-        literals.push(ctx.equal(s.symbol, val_expr));
+        if let Value::BitVec(bv) = val {
+            let width = bv.width();
+            for j in 0..width {
+                let bit_val: u64 = if bv.is_bit_set(j) { 1 } else { 0 };
+                let slice_expr = ctx.slice(s.symbol, j, j);
+                let bit_expr = ctx.bit_vec_val(bit_val, 1u32);
+                literals.push(ctx.equal(slice_expr, bit_expr));
+            }
+        }
+        // Array states: skip; cube blocks only bitvec state bits.
     }
+    Cube { literals }
+}
+
+/// Compute the intersection of two cubes: literals present in both.
+///
+/// Correct because identical bit-literals are interned to the same ExprRef.
+fn cube_intersect(a: &Cube, b: &Cube) -> Cube {
+    let b_set: std::collections::HashSet<ExprRef> = b.literals.iter().copied().collect();
+    let literals = a
+        .literals
+        .iter()
+        .copied()
+        .filter(|l| b_set.contains(l))
+        .collect();
     Cube { literals }
 }
 
@@ -197,14 +225,20 @@ fn query_and_result(
     smt_ctx: &mut impl SolverContext,
     enc: &impl TransitionSystemEncoding,
     sys: &TransitionSystem,
-    assumptions: Vec<ExprRef>
+    assumptions: Vec<ExprRef>,
 ) -> Result<QueryResult<(Cube, CexEntry)>> {
     match query(ctx, smt_ctx, assumptions)? {
         CheckSatResponse::Sat => {
             let state_values = extract_state_values(ctx, smt_ctx, enc, sys, STEP_CUR)?;
             let inputs = extract_input_values(ctx, smt_ctx, enc, sys, STEP_CUR)?;
             let cube = cube_from_state_values(ctx, sys, &state_values);
-            Ok(QueryResult::Sat((cube, CexEntry { state_values, inputs })))
+            Ok(QueryResult::Sat((
+                cube,
+                CexEntry {
+                    state_values,
+                    inputs,
+                },
+            )))
         }
         CheckSatResponse::Unsat => Ok(QueryResult::Unsat),
         CheckSatResponse::Unknown => Ok(QueryResult::Unknown),
@@ -227,7 +261,6 @@ fn find_bad_cube(
         bad_cur = ctx.or(bad_cur, b_cur);
     }
     assumptions.push(bad_cur);
-
     query_and_result(ctx, smt_ctx, enc, sys, assumptions)
 }
 
@@ -247,19 +280,22 @@ fn predecessor_check(
     assumptions.push(expr_at_step(ctx, enc, neg_cube, STEP_CUR));
     let cube_expr = cube.to_expr(ctx);
     assumptions.push(expr_at_step(ctx, enc, cube_expr, STEP_NXT));
-
     query_and_result(ctx, smt_ctx, enc, sys, assumptions)
 }
 
-/// Check SAT(F[frame_idx]@CUR ∧ ¬cube@CUR ∧ cube@NXT) without model extraction.
-fn is_inductive_relative(
+/// Check SAT(F[frame_idx]@CUR ∧ ¬cube@CUR ∧ cube@NXT).
+///
+/// Returns Unsat when ¬cube is inductive relative to F[frame_idx] (cube is blockable).
+/// Returns Sat(predecessor_cube) with the predecessor's bit-level cube extracted from the model.
+fn relind_check(
     ctx: &mut Context,
     smt_ctx: &mut impl SolverContext,
     enc: &impl TransitionSystemEncoding,
+    sys: &TransitionSystem,
     frames: &[Frame],
     frame_idx: usize,
     cube: &Cube,
-) -> Result<QueryResult<()>> {
+) -> Result<QueryResult<Cube>> {
     let mut assumptions = frame_assumptions(ctx, enc, frames, frame_idx, STEP_CUR);
     let neg_cube = cube.negate(ctx);
     assumptions.push(expr_at_step(ctx, enc, neg_cube, STEP_CUR));
@@ -267,45 +303,36 @@ fn is_inductive_relative(
     assumptions.push(expr_at_step(ctx, enc, cube_expr, STEP_NXT));
 
     match query(ctx, smt_ctx, assumptions)? {
-        CheckSatResponse::Sat => Ok(QueryResult::Sat(())),
+        CheckSatResponse::Sat => {
+            let state_values = extract_state_values(ctx, smt_ctx, enc, sys, STEP_CUR)?;
+            let pred_cube = cube_from_state_values(ctx, sys, &state_values);
+            Ok(QueryResult::Sat(pred_cube))
+        }
         CheckSatResponse::Unsat => Ok(QueryResult::Unsat),
         CheckSatResponse::Unknown => Ok(QueryResult::Unknown),
     }
 }
 
-/// Greedily drop literals while preserving relative inductiveness w.r.t. `frame_idx`.
-fn generalize(
+/// Check whether Init ∧ cube is satisfiable (cube intersects the initial states).
+///
+/// An empty cube's to_expr() = True, so init_intersects(empty) = SAT(Init) = true,
+/// which prevents the generalization functions from producing empty cubes.
+fn init_intersects(
     ctx: &mut Context,
     smt_ctx: &mut impl SolverContext,
     enc: &impl TransitionSystemEncoding,
     frames: &[Frame],
-    frame_idx: usize,
-    mut cube: Cube,
-) -> Result<QueryResult<Cube>> {
-    let mut i = 0;
-    while i < cube.literals.len() {
-        // Never drop the last literal: an empty cube negates to `false`, which
-        // would be trivially UNSAT in any induction check and cause `false` to
-        // be added as a blocking clause — corrupting all future queries.
-        if cube.literals.len() == 1 {
-            break;
-        }
-
-        let mut candidate_lits = cube.literals.clone();
-        candidate_lits.remove(i);
-        let candidate = Cube { literals: candidate_lits };
-
-        match is_inductive_relative(ctx, smt_ctx, enc, frames, frame_idx, &candidate)? {
-            QueryResult::Unsat => {
-                cube = candidate; // drop is safe
-            }
-            QueryResult::Sat(_) => {
-                i += 1;
-            }
-            QueryResult::Unknown => return Ok(QueryResult::Unknown),
-        }
+    cube: &Cube,
+) -> Result<bool> {
+    let mut assumptions = frame_assumptions(ctx, enc, frames, 0, STEP_CUR);
+    let cube_expr = cube.to_expr(ctx);
+    assumptions.push(expr_at_step(ctx, enc, cube_expr, STEP_CUR));
+    match query(ctx, smt_ctx, assumptions)? {
+        CheckSatResponse::Sat => Ok(true),
+        CheckSatResponse::Unsat => Ok(false),
+        // Conservative: treat Unknown as "intersects Init" to avoid blocking initial states.
+        CheckSatResponse::Unknown => Ok(true),
     }
-    Ok(QueryResult::Sat(cube))
 }
 
 /// Add the negation of `cube` as a blocking clause to frames 1..=up_to.
@@ -314,6 +341,159 @@ fn add_blocking_clause(ctx: &mut Context, frames: &mut [Frame], cube: &Cube, up_
     for f in frames[1..=up_to].iter_mut() {
         f.clauses.push(clause);
     }
+}
+
+/// Recursively block cube `c` at frame `frame_idx`, chasing predecessor chains up to `limit`.
+///
+/// The "extended" part of EXCTG: unlike CTG (which only tries to block the direct CTG),
+/// this function recursively tries to block each predecessor in the chain until either all
+/// predecessors are blocked (success) or the budget `limit` is exhausted (failure).
+///
+/// Algorithm 4, exctg_block (Su et al., arXiv:2501.02480v1).
+fn exctg_block(
+    ctx: &mut Context,
+    smt_ctx: &mut impl SolverContext,
+    enc: &impl TransitionSystemEncoding,
+    sys: &TransitionSystem,
+    frames: &mut Vec<Frame>,
+    cube: Cube,
+    frame_idx: usize,
+    limit: &mut usize,
+    cl: usize,
+) -> Result<bool> {
+    if init_intersects(ctx, smt_ctx, enc, frames, &cube)? {
+        return Ok(false);
+    }
+    // frame_idx == 0 means we would need relind(c, -1) — undefined; can't go deeper.
+    if frame_idx == 0 {
+        return Ok(false);
+    }
+    if *limit == 0 {
+        return Ok(false);
+    }
+    *limit -= 1;
+
+    let c = cube;
+    loop {
+        match relind_check(ctx, smt_ctx, enc, sys, frames, frame_idx - 1, &c)? {
+            QueryResult::Sat(pred) => {
+                // c is not yet blockable; recurse to block its predecessor.
+                if !exctg_block(
+                    ctx,
+                    smt_ctx,
+                    enc,
+                    sys,
+                    frames,
+                    pred,
+                    frame_idx - 1,
+                    limit,
+                    cl,
+                )? {
+                    return Ok(false);
+                }
+                // Predecessor blocked — loop to re-check relind(c, frame_idx-1).
+            }
+            QueryResult::Unsat => {
+                // c is inductive relative to F[frame_idx-1]; generalize and add clause.
+                let generalized =
+                    exctg_generalize(ctx, smt_ctx, enc, sys, frames, frame_idx - 1, c, cl)?;
+                add_blocking_clause(ctx, frames, &generalized, frame_idx);
+                return Ok(true);
+            }
+            QueryResult::Unknown => return Ok(false),
+        }
+    }
+}
+
+/// Try to show that literal-dropped cube `c` is inductively blockable at `frame_idx`.
+///
+/// Attempts CTG/EXCTG blocking (up to CTG_MAX CTGs) to strengthen F[frame_idx] so
+/// that the relind check succeeds.  Falls back to intersecting c with the predecessor
+/// (the "down" strategy) when the CTG budget is exhausted.
+///
+/// Returns Some(minimized_cube) on success, None on failure.
+///
+/// Algorithm 4, exctg_down (Su et al., arXiv:2501.02480v1).
+fn exctg_down(
+    ctx: &mut Context,
+    smt_ctx: &mut impl SolverContext,
+    enc: &impl TransitionSystemEncoding,
+    sys: &TransitionSystem,
+    frames: &mut Vec<Frame>,
+    mut cube: Cube,
+    frame_idx: usize,
+    cl: usize,
+) -> Result<Option<Cube>> {
+    let mut num_ctg = 0usize;
+    loop {
+        if init_intersects(ctx, smt_ctx, enc, frames, &cube)? {
+            return Ok(None);
+        }
+        match relind_check(ctx, smt_ctx, enc, sys, frames, frame_idx, &cube)? {
+            QueryResult::Unsat => return Ok(Some(cube)),
+            QueryResult::Sat(pred) => {
+                if cl > 0 && num_ctg < CTG_MAX && frame_idx > 0 {
+                    let mut fresh_limit = EXCTG_LIMIT;
+                    if exctg_block(
+                        ctx,
+                        smt_ctx,
+                        enc,
+                        sys,
+                        frames,
+                        pred.clone(),
+                        frame_idx,
+                        &mut fresh_limit,
+                        cl - 1,
+                    )? {
+                        num_ctg += 1;
+                        continue;
+                    }
+                }
+                // CTG budget exhausted or blocking failed: intersect with predecessor (down).
+                num_ctg = 0;
+                cube = cube_intersect(&cube, &pred);
+            }
+            QueryResult::Unknown => return Ok(None),
+        }
+    }
+}
+
+/// Greedily drop literals from `cube` while preserving relative inductiveness.
+///
+/// For each literal, attempts to drop it via exctg_down (which in turn may block
+/// CTG predecessors to enable the drop).  Returns the minimized cube.
+///
+/// Algorithm 4, exctg_generalize (Su et al., arXiv:2501.02480v1).
+fn exctg_generalize(
+    ctx: &mut Context,
+    smt_ctx: &mut impl SolverContext,
+    enc: &impl TransitionSystemEncoding,
+    sys: &TransitionSystem,
+    frames: &mut Vec<Frame>,
+    frame_idx: usize,
+    mut cube: Cube,
+    cl: usize,
+) -> Result<Cube> {
+    let mut i = 0;
+    while i < cube.literals.len() {
+        let mut cand_lits = cube.literals.clone();
+        cand_lits.remove(i);
+        let cand = Cube {
+            literals: cand_lits,
+        };
+
+        match exctg_down(ctx, smt_ctx, enc, sys, frames, cand, frame_idx, cl)? {
+            Some(reduced) => {
+                // Drop succeeded (possibly further minimized by down's intersection).
+                cube = reduced;
+                // i stays: the element at position i is now the next literal.
+            }
+            None => {
+                i += 1;
+            }
+        }
+    }
+    Ok(cube)
 }
 
 /// Propagate clauses from frame fi into fi+1 if they're preserved by T.
@@ -381,10 +561,6 @@ fn block_cube(
 
         if fi == 0 {
             // Check if cube ∩ Init ≠ ∅ (F[0] = Init via frames[0].clauses).
-            // If SAT: a real initial state reaches the bad state — CEX found.
-            // If UNSAT: cube is blocked from Init. This path should not occur in a
-            // correct run (predecessors found in Init are always in Init by construction),
-            // but we handle it defensively.
             let mut assumptions = frame_assumptions(ctx, enc, frames, 0, STEP_CUR);
             let cube_expr = cube.to_expr(ctx);
             assumptions.push(expr_at_step(ctx, enc, cube_expr, STEP_CUR));
@@ -392,23 +568,17 @@ fn block_cube(
             match query(ctx, smt_ctx, assumptions)? {
                 CheckSatResponse::Sat => {
                     // Real CEX: drain the stack from top (init-side) to bottom (bad-side).
-                    // Stack = [(bad, ...), ..., (fi=1, ...), (fi=0, e0)].
-                    // pop() gives fi=0 first, then fi=1, ..., then bad_entry.
                     let mut chain: Vec<CexEntry> = Vec::with_capacity(stack.len());
                     while let Some((_, _, e)) = stack.pop() {
                         chain.push(e);
                     }
-                    // chain = [e0 (init state), e1, ..., e_{k-1}, bad_entry]
                     return Ok(QueryResult::Sat(chain));
                 }
                 CheckSatResponse::Unsat => {
                     // Defensive: shouldn't happen normally. Block and continue.
-                    let gen_cube =
-                        match generalize(ctx, smt_ctx, enc, frames, 0, cube.clone())? {
-                            QueryResult::Sat(g) => g,
-                            _ => cube.clone(),
-                        };
-                    add_blocking_clause(ctx, frames, &gen_cube, 1);
+                    let gen_cube_lbl =
+                        exctg_generalize(ctx, smt_ctx, enc, sys, frames, 0, cube.clone(), CTG_LV)?;
+                    add_blocking_clause(ctx, frames, &gen_cube_lbl, 1);
                     stack.pop();
                 }
                 CheckSatResponse::Unknown => return Ok(QueryResult::Unknown),
@@ -419,12 +589,17 @@ fn block_cube(
                     stack.push((fi - 1, pred_cube, pred_entry));
                 }
                 QueryResult::Unsat => {
-                    let gen_cube =
-                        match generalize(ctx, smt_ctx, enc, frames, fi - 1, cube.clone())? {
-                            QueryResult::Sat(g) => g,
-                            _ => cube.clone(),
-                        };
-                    add_blocking_clause(ctx, frames, &gen_cube, fi);
+                    let gen_cube_lbl = exctg_generalize(
+                        ctx,
+                        smt_ctx,
+                        enc,
+                        sys,
+                        frames,
+                        fi - 1,
+                        cube.clone(),
+                        CTG_LV,
+                    )?;
+                    add_blocking_clause(ctx, frames, &gen_cube_lbl, fi);
                     stack.pop();
                 }
                 QueryResult::Unknown => return Ok(QueryResult::Unknown),
@@ -497,7 +672,12 @@ fn make_witness(ctx: &mut Context, sys: &TransitionSystem, chain: Vec<CexEntry>)
 // Public entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Runs PDR/IC3 for a maximum of `MAX_FRAMES` frames
+/// Runs PDR/IC3 with EXCTG generalization for a maximum of `MAX_FRAMES` frames.
+///
+/// EXCTG (Su et al., arXiv:2501.02480v1) subsumes CTG and Standard generalization
+/// as parameter special cases (CTG_LV=0 → Standard; EXCTG_LIMIT=1 → CTG).
+/// Cubes use bit-level literals (one per state bit) rather than whole-word equalities,
+/// which is required for generalization to learn range-style inductive invariants.
 pub fn pdr(
     ctx: &mut Context,
     smt_ctx: &mut impl SolverContext,
@@ -527,7 +707,6 @@ pub fn pdr(
     let mut frames: Vec<Frame> = vec![Frame::default(), Frame::default()];
     for s in &sys.states {
         if let Some(iv) = s.init {
-            // iv may be a literal or an init-signal expression; store un-stepped.
             let eq = ctx.equal(s.symbol, iv);
             frames[0].clauses.push(eq);
         }
@@ -547,7 +726,14 @@ pub fn pdr(
             CheckSatResponse::Sat => {
                 let state_values = extract_state_values(ctx, smt_ctx, &enc, sys, STEP_CUR)?;
                 let inputs = extract_input_values(ctx, smt_ctx, &enc, sys, STEP_CUR)?;
-                let wit = make_witness(ctx, sys, vec![CexEntry { state_values, inputs }]);
+                let wit = make_witness(
+                    ctx,
+                    sys,
+                    vec![CexEntry {
+                        state_values,
+                        inputs,
+                    }],
+                );
                 return Ok(ModelCheckResult::Fail(wit));
             }
             CheckSatResponse::Unknown => return Ok(ModelCheckResult::Unknown),
@@ -559,15 +745,13 @@ pub fn pdr(
 
     for _ in 0..MAX_FRAMES {
         match find_bad_cube(ctx, smt_ctx, &enc, sys, &frames, frontier)? {
-            QueryResult::Unsat => {
-                match propagate_clauses(ctx, smt_ctx, &enc, &mut frames)? {
-                    QueryResult::Sat(_) => return Ok(ModelCheckResult::Success),
-                    QueryResult::Unsat => {
-                        frontier += 1;
-                    }
-                    QueryResult::Unknown => return Ok(ModelCheckResult::Unknown),
+            QueryResult::Unsat => match propagate_clauses(ctx, smt_ctx, &enc, &mut frames)? {
+                QueryResult::Sat(_) => return Ok(ModelCheckResult::Success),
+                QueryResult::Unsat => {
+                    frontier += 1;
                 }
-            }
+                QueryResult::Unknown => return Ok(ModelCheckResult::Unknown),
+            },
             QueryResult::Sat((bad_cube, bad_entry)) => {
                 match block_cube(
                     ctx,

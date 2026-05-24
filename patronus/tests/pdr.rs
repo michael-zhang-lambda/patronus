@@ -102,7 +102,10 @@ fn validate_witness(ctx: &Context, sys: &TransitionSystem, wit: &Witness) {
         !wit.failed_safety.is_empty(),
         "witness must name at least one failed safety property"
     );
-    assert!(!wit.inputs.is_empty(), "witness must have at least one step entry");
+    assert!(
+        !wit.inputs.is_empty(),
+        "witness must have at least one step entry"
+    );
 
     let mut sim = Interpreter::new(ctx, sys);
     sim.init(InitKind::Zero);
@@ -202,9 +205,16 @@ fn count2_pdr_witness_nonempty() {
         return;
     }
     if let ModelCheckResult::Fail(wit) = run_pdr_str(COUNT_2) {
-        assert!(!wit.failed_safety.is_empty(), "Must name at least one failed property");
+        assert!(
+            !wit.failed_safety.is_empty(),
+            "Must name at least one failed property"
+        );
         // CEX must have at least 8 steps (states 0..7).
-        assert!(wit.inputs.len() >= 7, "Witness too short: {} steps", wit.inputs.len());
+        assert!(
+            wit.inputs.len() >= 7,
+            "Witness too short: {} steps",
+            wit.inputs.len()
+        );
     } else {
         panic!("Expected Fail");
     }
@@ -229,9 +239,7 @@ fn check_pdr_bmc_agree(pdr_res: ModelCheckResult, bmc_res: ModelCheckResult, lab
         (ModelCheckResult::Fail(_), ModelCheckResult::Success) => {
             panic!("{label}: PDR found a counterexample but BMC says safe");
         }
-        (ModelCheckResult::Unknown, ModelCheckResult::Unknown) => {
-            ()
-        }
+        (ModelCheckResult::Unknown, ModelCheckResult::Unknown) => (),
         // Unknown from BMC XOR PDR is unacceptable.
         (ModelCheckResult::Unknown, _) => panic!("Unknown result from PDR"),
         _ => panic!("Unknown result from BMC"),
@@ -342,7 +350,12 @@ fn starts_bad_pdr_witness_valid() {
     // STARTS_BAD fires at step 0 — the witness chain has exactly one entry.
     let (ctx, sys, result) = run_pdr_str_full(STARTS_BAD);
     if let ModelCheckResult::Fail(wit) = result {
-        assert_eq!(wit.inputs.len(), 1, "expected a 0-step witness, got {} steps", wit.inputs.len());
+        assert_eq!(
+            wit.inputs.len(),
+            1,
+            "expected a 0-step witness, got {} steps",
+            wit.inputs.len()
+        );
         validate_witness(&ctx, &sys, &wit);
     } else {
         panic!("Expected Fail for STARTS_BAD, got {:?}", result);
@@ -370,7 +383,12 @@ fn trigger_bad_pdr_witness_valid() {
     // TRIGGER_BAD needs exactly one transition (trigger=1 at step 0 → bad at step 1).
     let (ctx, sys, result) = run_pdr_str_full(TRIGGER_BAD);
     if let ModelCheckResult::Fail(wit) = result {
-        assert_eq!(wit.inputs.len(), 2, "expected a 2-step witness, got {} steps", wit.inputs.len());
+        assert_eq!(
+            wit.inputs.len(),
+            2,
+            "expected a 2-step witness, got {} steps",
+            wit.inputs.len()
+        );
         validate_witness(&ctx, &sys, &wit);
     } else {
         panic!("Expected Fail for TRIGGER_BAD, got {:?}", result);
