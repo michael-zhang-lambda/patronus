@@ -678,11 +678,15 @@ fn make_witness(ctx: &mut Context, sys: &TransitionSystem, chain: Vec<CexEntry>)
 /// as parameter special cases (CTG_LV=0 → Standard; EXCTG_LIMIT=1 → CTG).
 /// Cubes use bit-level literals (one per state bit) rather than whole-word equalities,
 /// which is required for generalization to learn range-style inductive invariants.
+///
+/// `time_limit` caps wall-clock execution; returns `Unknown` if the deadline is exceeded.
 pub fn pdr(
     ctx: &mut Context,
     smt_ctx: &mut impl SolverContext,
     sys: &TransitionSystem,
+    time_limit: Option<std::time::Duration>,
 ) -> Result<ModelCheckResult> {
+    let deadline = time_limit.map(|d| std::time::Instant::now() + d);
     let mut enc = match start_bmc_or_pdr(ctx, smt_ctx, sys)? {
         (r, None) => return Ok(r),
         (_, Some(enc)) => enc,
@@ -744,6 +748,11 @@ pub fn pdr(
     let mut frontier = 1usize;
 
     for _ in 0..MAX_FRAMES {
+        if let Some(dl) = deadline {
+            if std::time::Instant::now() >= dl {
+                return Ok(ModelCheckResult::Unknown);
+            }
+        }
         match find_bad_cube(ctx, smt_ctx, &enc, sys, &frames, frontier)? {
             QueryResult::Unsat => match propagate_clauses(ctx, smt_ctx, &enc, &mut frames)? {
                 QueryResult::Sat(_) => return Ok(ModelCheckResult::Success),
