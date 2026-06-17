@@ -227,7 +227,6 @@ mod pdr_tests {
         assert!(matches!(res, ModelCheckResult::Success));
     }
 
-    #[ignore = "Cubes are not subsumed in PDR, leading to solver explosion"]
     #[test]
     fn test_aman_goel_4bit() {
         let (_, _, res) = run_pdr_file("../inputs/unittest/aman_goel_4bit.btor", None);

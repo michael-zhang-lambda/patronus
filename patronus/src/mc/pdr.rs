@@ -11,7 +11,7 @@ use crate::mc::{
 use crate::smt::*;
 use crate::system::TransitionSystem;
 use baa::{ArrayOps, BitVecOps, BitVecValue, Value};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::rc::Rc;
@@ -19,9 +19,7 @@ use std::rc::Rc;
 type Step = u64;
 
 const CUR_STEP: Step = 1;
-
 const NXT_STEP: Step = 2;
-
 const MAX_FRAMES: usize = 1000;
 
 // -------------------------------------------------------------------------------------------------
@@ -260,6 +258,18 @@ fn query(
 
     // Return result
     smt_res
+}
+
+/// Checks whether a cube syntactically subsumes another cube
+/// (i.e. a subsumes b <==> a's literals are a subset of b's literals)
+fn subsumes(a: &Cube, b: &Cube) -> bool {
+    // Collect all literals of second cube
+    let lits = b.literals.iter().collect::<FxHashSet<_>>();
+
+    // Check whether every literal in a is in b
+    a.literals
+        .iter()
+        .all(|lit| lits.contains(lit))
 }
 
 /// Construct witness from counterexample trace
@@ -596,6 +606,10 @@ impl BasePdr {
 
         // Add new cube to all frames
         for idx in 1..=front {
+            // Removed subsumed cubes in frame
+            self.frames[idx].retain(|c| !subsumes(&cube.cube, c));
+
+            // Add blocked cube
             self.frames[idx].push(cube.cube.clone());
         }
     }
@@ -723,7 +737,7 @@ impl Pdr for BasePdr {
 
         // Try to propagate blocked cubes in each frame forward
         for idx in 1..front {
-            let mut num_left = self.frames[idx].len();
+            let mut prop_cubes = Vec::new();
 
             for cube_idx in 0..self.frames[idx].len() {
                 // Get cube
@@ -740,15 +754,22 @@ impl Pdr for BasePdr {
                     == CheckSatResponse::Unsat
                 {
                     // Add blocked cube to next frame
-                    self.frames[idx + 1].push(cube.clone());
-                    num_left -= 1;
+                    prop_cubes.push(cube);
                 }
             }
 
             // Check for inductive invariant: all clauses propagated
-            if num_left == 0 {
+            if prop_cubes.len() == self.frames[idx].len() {
                 return Ok(true);
             }
+
+            // Removed subsumed cubes in next frame
+            for cube in &prop_cubes {
+                self.frames[idx + 1].retain(|c| !subsumes(cube, c));
+            }
+
+            // Add all propagated cubes to next frame
+            self.frames[idx + 1].extend(prop_cubes);
         }
 
         // Inductive invariant not found
