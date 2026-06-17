@@ -267,9 +267,7 @@ fn subsumes(a: &Cube, b: &Cube) -> bool {
     let lits = b.literals.iter().collect::<FxHashSet<_>>();
 
     // Check whether every literal in a is in b
-    a.literals
-        .iter()
-        .all(|lit| lits.contains(lit))
+    a.literals.iter().all(|lit| lits.contains(lit))
 }
 
 /// Construct witness from counterexample trace
