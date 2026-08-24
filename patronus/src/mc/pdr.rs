@@ -304,8 +304,8 @@ impl<E: TransitionSystemEncoding> PdrEncodingWrapper<E> {
     /// Step all symbol leaves in SMT expressions
     ///
     /// # Precondition
-    /// All symbols in [expr] must be unstepped, and there must exist a stepped version of each
-    /// symbol at [step] (unrolled in the original [`TransitionSystemEncoding`])
+    /// All symbols in `expr` must be unstepped, and there must exist a stepped version of each
+    /// symbol at `step` (unrolled in the original [`TransitionSystemEncoding`])
     fn expr_at_step(&mut self, ctx: &mut Context, expr: ExprRef, step: Step) -> ExprRef {
         if let Some(&sym) = self.expr_cache.get(&(expr, step)) {
             // If stepped expression already exists in cache, return cached version
@@ -676,7 +676,7 @@ impl BasePdr {
     /// on non-intersection if `get_unsat_core` is true
     ///
     /// # Errors
-    /// Returns [`UnexpectedResponse`] if any SMT query returns `UNKNOWN`
+    /// Returns [`Error::UnexpectedResponse`] if any SMT query returns `UNKNOWN`
     fn intersects_init(
         &mut self,
         ctx: &mut Context,
@@ -812,7 +812,7 @@ impl BasePdr {
     ///
     /// # Returns
     /// Query result and possibly a model for `SAT` cases, or a generalized cube if
-    /// `unsat_core_enabled` is set in [`GLOB_PDR_OPTS`]
+    /// `disable_unsat_cores` is not [`true`]
     fn rel_ind(
         &mut self,
         ctx: &mut Context,
@@ -910,7 +910,7 @@ impl BasePdr {
     /// (i.e. `SAT?[R_N /\ \neg P]`)
     ///
     /// # Returns
-    /// [`Some(Cube)`] with violation, else [`None`]
+    /// `Some(Cube)` with violation, else [`None`]
     ///
     /// # Errors
     /// In cases of `Unknown` SMT queries, return [`Error::UnexpectedResponse`]
