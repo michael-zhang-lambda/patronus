@@ -25,6 +25,9 @@ const MAX_FRAMES: usize = 1000;
 /// Activation literal prefix
 const ACT_LIT_PREFIX: &str = "__pdr_act_";
 
+/// Activation literal prefix for frames
+const FRAME_LIT_PREFIX: &str = "__pdr_frame_act_";
+
 // -------------------------------------------------------------------------------------------------
 // Core PDR data structures
 // -------------------------------------------------------------------------------------------------
@@ -339,7 +342,7 @@ struct ActLitScope {
 impl ActLitScope {
     /// Permanently disable all activation literals in this scope
     fn release(&mut self, ctx: &mut Context, smt_ctx: &mut impl SolverContext) -> Result<()> {
-        for &lit in &self.act_lits {
+        for lit in self.act_lits.drain(..) {
             let neg_lit = ctx.not(lit);
             smt_ctx.assert(ctx, neg_lit)?;
         }
@@ -368,8 +371,8 @@ impl ActLitPool {
         Ok(lit)
     }
 
-    /// Create a temporary activation literal that is coupled with [body] (i.e. `act => body`)
-    /// and registered into [scope]
+    /// Create a temporary activation literal that is coupled with `body` (i.e. `act => body`)
+    /// and registered into `scope`
     fn imply(
         &mut self,
         ctx: &mut Context,
@@ -377,7 +380,7 @@ impl ActLitPool {
         scope: &mut ActLitScope,
         body: ExprRef,
     ) -> Result<ExprRef> {
-        // If solver supports compound expression assumptios, then activation literals
+        // If solver supports compound expression assumptions, then activation literals
         // are not needed
         if smt_ctx.supports_check_assuming_exprs() {
             return Ok(body);
@@ -397,7 +400,7 @@ impl ActLitPool {
     /// with the associated stepped cube literal
     ///
     /// # Precondition
-    /// [stepped_lit] must be stepped
+    /// `stepped_lit` must be stepped
     ///
     /// # Note
     /// Produced activation literal remains in global solver context. This is sound since
@@ -413,18 +416,18 @@ impl ActLitPool {
             return Ok(*act);
         }
 
-        // Create `act => stepped_lit` and assert in solverjj
+        // Create `act => stepped_lit` and assert in solver
         let act = self.create(ctx, smt_ctx)?;
         let imp = ctx.implies(act, stepped_lit);
         smt_ctx.assert(ctx, imp)?;
 
-        // Register steppped literal and its activation literal in cache
+        // Register stepped literal and its activation literal in cache
         self.step_lit_cache.insert(stepped_lit, act);
         Ok(act)
     }
 }
 
-/// Execute closure with a fresh [`ActScope`] and clean up all used activation literals in the end
+/// Execute closure with a fresh [`ActLitScope`] and clean up all used activation literals in the end
 fn with_act_scope<S: SolverContext, T>(
     ctx: &mut Context,
     smt_ctx: &mut S,
@@ -959,7 +962,7 @@ impl BasePdr {
     fn add_frame(&mut self, ctx: &mut Context, smt_ctx: &mut impl SolverContext) -> Result<()> {
         // Create new activation literal for frame
         let act = ctx.bv_symbol(
-            format!("__pdr_frame_act_{}", self.frames.len() + 1).as_str(),
+            format!("{FRAME_LIT_PREFIX}{}", self.frames.len() + 1).as_str(),
             1,
         );
         smt_ctx.declare_const(ctx, act)?;
@@ -1140,49 +1143,53 @@ impl BasePdr {
 
             // Try to propagate all blocked cubes in the last finite frame into the infinite frame
             for cube in std::mem::take(&mut self[front].cubes) {
-                let clause_expr = cube.negate(ctx);
-                let clause_from = self.enc.expr_at_step(ctx, clause_expr, FROM_STEP);
-                let clause_proxy = self.pool.imply(ctx, smt_ctx, scope, clause_from)?;
+                with_act_scope(ctx, smt_ctx, |ctx, smt_ctx, scope| {
+                    let clause_expr = cube.negate(ctx);
+                    let clause_from = self.enc.expr_at_step(ctx, clause_expr, FROM_STEP);
+                    let clause_proxy = self.pool.imply(ctx, smt_ctx, scope, clause_from)?;
 
-                let cube_expr = cube.to_expr(ctx);
-                let cube_to = self.enc.expr_at_step(ctx, cube_expr, TO_STEP);
-                let cube_proxy = self.pool.imply(ctx, smt_ctx, scope, cube_to)?;
+                    let cube_expr = cube.to_expr(ctx);
+                    let cube_to = self.enc.expr_at_step(ctx, cube_expr, TO_STEP);
+                    let cube_proxy = self.pool.imply(ctx, smt_ctx, scope, cube_to)?;
 
-                // Disable `FROM_STEP` bad states
-                let neg_bad = ctx.not(self.from_step_bad_active);
+                    // Disable `FROM_STEP` bad states
+                    let neg_bad = ctx.not(self.from_step_bad_active);
 
-                // Run the query `SAT?[R_\infty /\ \neg c /\ T /\ c']`, asserting that the
-                // constraints hold at `TO_STEP`
-                let smt_res = query(
-                    ctx,
-                    smt_ctx,
-                    sys,
-                    &mut self.enc,
-                    vec![
-                        inf_assump,
-                        clause_proxy,
-                        cube_proxy,
-                        self.to_step_constraints_active,
-                        neg_bad,
-                    ],
-                    false,
-                )?
-                .0;
-
-                if smt_res == CheckSatResponse::Unsat {
-                    // If UNSAT, blocked cube can also be propagated to infinite frame
-                    self.add_blocked_cube(
+                    // Run the query `SAT?[R_\infty /\ \neg c /\ T /\ c']`, asserting that the
+                    // constraints hold at `TO_STEP`
+                    let smt_res = query(
                         ctx,
                         smt_ctx,
-                        TimedCube {
-                            cube,
-                            frame: FrameId::Infinite,
-                        },
-                    )?;
-                } else {
-                    // Else, blocked cube can only stay in finite frame
-                    self[front].cubes.push(cube);
-                }
+                        sys,
+                        &mut self.enc,
+                        vec![
+                            inf_assump,
+                            clause_proxy,
+                            cube_proxy,
+                            self.to_step_constraints_active,
+                            neg_bad,
+                        ],
+                        false,
+                    )?
+                    .0;
+
+                    if smt_res == CheckSatResponse::Unsat {
+                        // If UNSAT, blocked cube can also be propagated to infinite frame
+                        self.add_blocked_cube(
+                            ctx,
+                            smt_ctx,
+                            TimedCube {
+                                cube,
+                                frame: FrameId::Infinite,
+                            },
+                        )?;
+                    } else {
+                        // Else, blocked cube can only stay in finite frame
+                        self[front].cubes.push(cube);
+                    }
+
+                    Ok(())
+                })?;
             }
 
             Ok(())
@@ -1228,6 +1235,9 @@ pub fn pdr(
             )? {
                 // Reset solver
                 smt_ctx.restart()?;
+
+                // Clear the stepped literal cache
+                state.pool.step_lit_cache.clear();
 
                 // Cube could not be blocked: construct witness from BMC instance and fail
                 let ModelCheckResult::Fail(wit) =
