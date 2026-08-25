@@ -86,9 +86,7 @@ pub trait SolverMetaData {
     fn name(&self) -> &str;
     fn supports_check_assuming(&self) -> bool;
     /// Indicates whether `(check-sat-assuming ...)` accepts arbitrary Boolean-valued expressions
-    fn supports_check_assuming_exprs(&self) -> bool {
-        true
-    }
+    fn supports_check_assuming_exprs(&self) -> bool;
     fn supports_uf(&self) -> bool;
     /// Indicates whether the solver supports the non-standard `(as const)` command.
     fn supports_const_array(&self) -> bool;
