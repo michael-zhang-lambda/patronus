@@ -501,7 +501,7 @@ pub const YICES2: SmtLibSolver = SmtLibSolver {
     supports_check_assuming_exprs: false,
     // see https://github.com/SRI-CSL/yices2/issues/110
     supports_const_array: false,
-    supports_unsat_assumptions: true,
+    supports_unsat_assumptions: false,
 };
 
 pub const Z3: SmtLibSolver = SmtLibSolver {
