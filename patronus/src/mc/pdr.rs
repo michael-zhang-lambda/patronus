@@ -547,6 +547,9 @@ impl BasePdr {
 
         let mut init_cube = Cube::tru();
 
+        // Activation literal pool
+        let mut pool = ActLitPool::default();
+
         // Get all initial states from the system and create equalities between symbol
         // and initial values
         for state in &sys.states {
@@ -563,8 +566,6 @@ impl BasePdr {
         }
 
         // `FROM_STEP` bad state activation literal
-        let bad_act = ctx.bv_symbol(format!("{ACT_LIT_PREFIX}from_bad").as_str(), 1);
-
         let bad_from_expr = sys
             .bad_states
             .iter()
@@ -572,15 +573,9 @@ impl BasePdr {
             .collect::<Vec<_>>()
             .into_iter()
             .fold(ctx.get_false(), |acc, b| ctx.or(acc, b));
-        let bad_imp = ctx.implies(bad_act, bad_from_expr);
-
-        // Permanently assert in solver
-        smt_ctx.declare_const(ctx, bad_act)?;
-        smt_ctx.assert(ctx, bad_imp)?;
+        let bad_act = pool.step_lit_act(ctx, smt_ctx, bad_from_expr)?;
 
         // `TO_STEP` constraint activation literal
-        let cons_act = ctx.bv_symbol(format!("{ACT_LIT_PREFIX}to_cons").as_str(), 1);
-
         let cons_to_expr = sys
             .constraints
             .iter()
@@ -588,23 +583,12 @@ impl BasePdr {
             .collect::<Vec<_>>()
             .into_iter()
             .fold(ctx.get_true(), |acc, c| ctx.and(acc, c));
-        let cons_imp = ctx.implies(cons_act, cons_to_expr);
-
-        // Permanently assert in solver
-        smt_ctx.declare_const(ctx, cons_act)?;
-        smt_ctx.assert(ctx, cons_imp)?;
+        let cons_act = pool.step_lit_act(ctx, smt_ctx, cons_to_expr)?;
 
         // Initial frame activation literal
-        let init_act = ctx.bv_symbol(format!("{ACT_LIT_PREFIX}init").as_str(), 1);
-
-        // Create act_0 => init_cube, where init_cube is stepped to the before step
         let init_expr = init_cube.to_expr(ctx);
-        let init_expr = enc.expr_at_step(ctx, init_expr, FROM_STEP);
-        let init_imp = ctx.implies(init_act, init_expr);
-
-        // Permanently assert implication in solver
-        smt_ctx.declare_const(ctx, init_act)?;
-        smt_ctx.assert(ctx, init_imp)?;
+        let init_from_expr = enc.expr_at_step(ctx, init_expr, FROM_STEP);
+        let init_act = pool.step_lit_act(ctx, smt_ctx, init_from_expr)?;
 
         // Create infinite frame
         let inf_act = ctx.bv_symbol(format!("{ACT_LIT_PREFIX}inf").as_str(), 1);
@@ -621,7 +605,7 @@ impl BasePdr {
             init_frame: init_act,
             inf_frame,
             frames: vec![], // Index consistency taken care by indexing function
-            pool: ActLitPool::default(),
+            pool,
             opts: PdrOptions {
                 disable_unsat_cores,
             },
@@ -1183,7 +1167,6 @@ pub fn pdr(
         (r, None) => return Ok(r),
         (_, Some(enc)) => enc,
     };
-
     // Initialize PDR
     let mut state = BasePdr::init(ctx, smt_ctx, enc, sys, disable_unsat_cores)?;
 
@@ -1207,9 +1190,6 @@ pub fn pdr(
             )? {
                 // Reset solver
                 smt_ctx.restart()?;
-
-                // Clear the stepped literal cache
-                state.pool.step_lit_cache.clear();
 
                 // Cube could not be blocked: construct witness from BMC instance and fail
                 let ModelCheckResult::Fail(wit) =
