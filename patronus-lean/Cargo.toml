@@ -1,0 +1,16 @@
+[package]
+name = "patronus-lean"
+description = "Translates patronus transition systems into Lean."
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+patronus.workspace = true
+
+[dev-dependencies]
+insta = { version = "1.*", features = ["yaml"] }

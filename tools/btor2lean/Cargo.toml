@@ -1,0 +1,15 @@
+[package]
+name = "btor2lean"
+version = "0.1.0"
+description = "Translates a btor2 file into Lean using the patronus library."
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+patronus.workspace = true
+patronus-lean = { path = "../../patronus-lean" }
+clap.workspace = true
