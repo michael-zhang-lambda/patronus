@@ -18,7 +18,7 @@ fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
             let dec = value.to_dec_str();
             format!("{dec}#{width}")
         }
-        Expr::BVSymbol { name, width } => {
+        Expr::BVSymbol { name, width: _ } => {
             let name = ctx[name.to_owned()].clone();
             format!("{prefix_str}.{name}")
         }
@@ -38,8 +38,26 @@ fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
         }
         Expr::BVAnd(a, b, _width) => {
             let (a_str, b_str) = (
-                translate_expr(ctx, *a, prefix),
-                translate_expr(ctx, *b, prefix),
+                {
+                    let str = translate_expr(ctx, *a, prefix);
+                    if str == "1#1" {
+                        String::from("True")
+                    } else if str == "0#1" {
+                        String::from("False")
+                    } else {
+                        str
+                    }
+                },
+                {
+                    let str = translate_expr(ctx, *b, prefix);
+                    if str == "1#1" {
+                        String::from("True")
+                    } else if str == "0#1" {
+                        String::from("False")
+                    } else {
+                        str
+                    }
+                },
             );
             format!("({a_str} ∧ {b_str})")
         }
@@ -58,6 +76,10 @@ fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
             );
             format!("(if {cond_str} then {tru_str} else {fals_str})")
         }
+        Expr::BVNot(e, _width) => {
+            let e_str = translate_expr(ctx, *e, prefix);
+            format!("¬({e_str})")
+        }
         _ => unimplemented!(),
     }
 }
@@ -68,7 +90,7 @@ fn translate_system(
     sys: &TransitionSystem,
     out: &mut impl Write,
 ) -> std::io::Result<()> {
-    let (mut state_ct, mut bad_ct) = (0u64, 0u64);
+    let mut state_ct = 0u64;
     let mut name_map: FxHashMap<State, String> = FxHashMap::default();
 
     let name = if sys.name.is_empty() {
@@ -99,8 +121,9 @@ fn translate_system(
         // Add state definition
         writeln!(out, "\t{state_name} : BitVec {width}")?;
     }
+    writeln!(out)?;
 
-    writeln!(out, "instance Circuit {name} where")?;
+    writeln!(out, "instance : Circuit {name} where")?;
 
     write!(out, "\tInit c := True")?;
     for state in sys.states.iter() {
@@ -112,7 +135,7 @@ fn translate_system(
             write!(out, " ∧ c.{state_name} = {init_str}")?;
         }
     }
-    writeln!(out, "")?;
+    writeln!(out)?;
 
     write!(out, "\tTrans cb ca := True")?;
     for state in sys.states.iter() {
@@ -123,28 +146,23 @@ fn translate_system(
             write!(out, " ∧ ca.{state_name} = {next_str}")?;
         }
     }
-    writeln!(out, "")?;
+    writeln!(out)?;
 
     // NOTE: constraints are not supported yet
     writeln!(out, "\tAssump _ := True\n")?;
 
     write!(out, "def bad (c : {name}) : Prop := False")?;
     for &bad in sys.bad_states.iter() {
-        let bad_name = if let Some(name) = sys.names[bad].map(|n| &ctx[n]) {
-            name.clone()
-        } else {
-            let name = format!("bad{bad_ct}");
-            bad_ct += 1;
-            name
-        };
         let bad_str = translate_expr(ctx, bad, "c");
-        write!(out, " ∨ c.{bad_name} = {bad_str}")?;
+        write!(out, " ∨ {bad_str}")?;
     }
-    writeln!(out, "\n")?;
+    writeln!(out)?;
+    writeln!(out)?;
 
+    // Create final safety theorem
     writeln!(
         out,
-        "theorem {name}_safe (n : Nat) (hb : 0 < n) : forall (t : List ({name})), (forall c in t, Circuit.Assump c) -> Trace t -> (forall c in t, ¬bad c) := by sorry"
+        "theorem {name}_safe (n : Nat) (hb : 0 < n) : ∀(t : List ({name})), (∀c ∈ t, Circuit.Assump c) -> Trace t -> (∀c ∈ t, ¬(bad c)) := by sorry"
     )
 }
 
@@ -170,14 +188,6 @@ pub fn translate(
     writeln!(out, "namespace {namespace}")?;
     writeln!(out)?;
     translate_system(ctx, sys, out)?;
-    for &input in sys.inputs.iter() {
-        let name = ctx.get_symbol_name(input).unwrap_or("<anonymous>");
-        writeln!(out, "-- input: {name}")?;
-    }
-    for state in sys.states.iter() {
-        let name = ctx.get_symbol_name(state.symbol).unwrap_or("<anonymous>");
-        writeln!(out, "-- state: {name}")?;
-    }
     writeln!(out)?;
     writeln!(out, "end {namespace}")?;
     Ok(())
