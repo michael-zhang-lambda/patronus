@@ -11,6 +11,8 @@ version.workspace = true
 
 [dependencies]
 patronus.workspace = true
+rustc-hash.workspace = true
+baa.workspace = true
 
 [dev-dependencies]
 insta = { version = "1.*", features = ["yaml"] }
