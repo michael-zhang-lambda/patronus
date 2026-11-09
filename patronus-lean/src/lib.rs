@@ -162,14 +162,14 @@ fn translate_system(
     )
 }
 
-/// Translates `sys` into Lean and returns the source as a string.
+/// Translate `sys` into Lean and returns the source as a string.
 pub fn translate_to_str(ctx: &Context, sys: &TransitionSystem) -> String {
     let mut buf = Vec::new();
     translate(ctx, sys, &mut buf).expect("writing to an in-memory buffer cannot fail");
     String::from_utf8(buf).expect("generated Lean is valid UTF-8")
 }
 
-/// Translates `sys` into Lean and writes the source to `out`.
+/// Translate `sys` into Lean and writes the source to `out`.
 pub fn translate(
     ctx: &Context,
     sys: &TransitionSystem,
