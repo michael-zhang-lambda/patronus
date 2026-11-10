@@ -10,7 +10,6 @@ use std::io::Write;
 
 /// Translate BTOR expression into Lean expression
 fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
-    let prefix_str = prefix.to_string();
     match &ctx[expr] {
         Expr::BVLiteral(lit) => {
             let width = lit.width();
@@ -20,7 +19,7 @@ fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
         }
         Expr::BVSymbol { name, width: _ } => {
             let name = ctx[name.to_owned()].clone();
-            format!("{prefix_str}.{name}")
+            format!("{prefix}.{name}")
         }
         Expr::BVAdd(a, b, _width) => {
             let (a_str, b_str) = (
@@ -34,16 +33,16 @@ fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
                 translate_expr(ctx, *a, prefix),
                 translate_expr(ctx, *b, prefix),
             );
-            format!("({a_str} = {b_str})")
+            format!("({a_str} == {b_str})")
         }
         Expr::BVAnd(a, b, _width) => {
             let (a_str, b_str) = (
                 {
                     let str = translate_expr(ctx, *a, prefix);
                     if str == "1#1" {
-                        String::from("True")
+                        String::from("true")
                     } else if str == "0#1" {
-                        String::from("False")
+                        String::from("false")
                     } else {
                         str
                     }
@@ -51,15 +50,15 @@ fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
                 {
                     let str = translate_expr(ctx, *b, prefix);
                     if str == "1#1" {
-                        String::from("True")
+                        String::from("true")
                     } else if str == "0#1" {
-                        String::from("False")
+                        String::from("false")
                     } else {
                         str
                     }
                 },
             );
-            format!("({a_str} ∧ {b_str})")
+            format!("({a_str} && {b_str})")
         }
         Expr::BVGreater(a, b) => {
             let (a_str, b_str) = (
@@ -91,13 +90,14 @@ fn translate_system(
     sys_name: &str,
     out: &mut impl Write,
 ) -> std::io::Result<()> {
-    let mut state_ct = 0u64;
-    let mut name_map: FxHashMap<State, String> = FxHashMap::default();
+    let (mut state_ct, mut input_ct) = (0u64, 0u64);
+    let mut state_names: FxHashMap<State, String> = FxHashMap::default();
 
-    writeln!(out, "structure {sys_name} where\n  mk ::")?;
+    writeln!(out, "structure State where")?;
+    writeln!(out, "  mk ::")?;
     for state in sys.states.iter() {
-        // Get name of state variable
-        let state_name = if let Some(name) = ctx.get_symbol_name(state.symbol) {
+        // Get human-readable name of state, or assign default name
+        let name = if let Some(name) = ctx.get_symbol_name(state.symbol) {
             name.to_string()
         } else {
             let name = format!("state{state_ct}");
@@ -105,60 +105,87 @@ fn translate_system(
             name
         };
 
-        name_map.insert(*state, state_name.clone());
+        // Add name entry to map
+        state_names.insert(*state, name.clone());
 
-        // Get width of bitvector (ignore arrays for now)
-        let width = match state.symbol.get_type(ctx) {
-            Type::BV(width) => width,
-            Type::Array(_at) => unimplemented!(),
+        // Write appropriate field definition
+        // NOTE: arrays are ignored for now
+        match state.symbol.get_type(ctx) {
+            Type::BV(width) => writeln!(out, "  {name} : BitVec {width}")?,
+            Type::Array(_) => unimplemented!(),
+        };
+    }
+    writeln!(out)?;
+    writeln!(out)?;
+
+    writeln!(out, "structure Input where")?;
+    writeln!(out, "  mk ::")?;
+    for input in sys.inputs.iter() {
+        // Get human-readable name of input, or assign default name
+        let name = if let Some(name) = ctx.get_symbol_name(*input) {
+            name.to_string()
+        } else {
+            let name = format!("input{input_ct}");
+            input_ct += 1;
+            name
         };
 
-        // Add state definition
-        writeln!(out, "  {state_name} : BitVec {width}")?;
+        // Write appropriate field definition
+        // NOTE: arrays are ignored for now
+        match input.get_type(ctx) {
+            Type::BV(width) => writeln!(out, "  {name} : BitVec {width}")?,
+            Type::Array(_) => unimplemented!(),
+        };
     }
     writeln!(out)?;
+    writeln!(out)?;
 
-    writeln!(out, "instance : Circuit {sys_name} where")?;
-
-    write!(out, "  Init c := True")?;
-    for state in sys.states.iter() {
-        let state_name = name_map[state].clone();
+    writeln!(out, "def {sys_name}_sys : TransSys State Input State := {{")?;
+    writeln!(out, "  init := fun (o : State) => {{")?;
+    for (state, name) in state_names.iter() {
         if let Some(init) = state.init {
-            // If there is an initial value for some state
-            // conjunct the assignment to the `Init` formula
-            let init_str = translate_expr(ctx, init, "c");
-            write!(out, " ∧ c.{state_name} = {init_str}")?;
+            // State has explicit initial expression
+            let init_str = translate_expr(ctx, init, "");
+            writeln!(out, "    {name} := {init_str}")?;
+        } else {
+            // State has no explicit initial expression: let oracle decide
+            writeln!(out, "    {name} := o.{name}")?;
         }
     }
-    writeln!(out)?;
+    writeln!(out, "  }},")?;
 
-    write!(out, "  Trans cb ca := True")?;
-    for state in sys.states.iter() {
-        let state_name = name_map[state].clone();
+    writeln!(out, "next := fun (s : State) (i : Input) => {{")?;
+    for (state, name) in state_names.iter() {
         if let Some(next) = state.next {
-            // If there is a next state, construct formula
-            let next_str = translate_expr(ctx, next, "cb");
-            write!(out, " ∧ ca.{state_name} = {next_str}")?;
+            // State has explicit transition
+            let next_str = translate_expr(ctx, next, "s");
+            writeln!(out, "    {name} := {next_str}")?;
+        } else {
+            // State does not transition: preserve old state
+            writeln!(out, "    {name} := s.{name}")?;
         }
     }
-    writeln!(out)?;
+    writeln!(out, "  }},")?;
 
-    // NOTE: constraints are not supported yet
-    writeln!(out, "  Assump _ := True")?;
-    writeln!(out)?;
+    // NOTE: constraints are ignored for now
+    writeln!(out, "constraint := fun _ _ => true,")?;
 
-    write!(out, "def bad (c : {sys_name}) : Prop := False")?;
+    writeln!(out, "bad := fun (s : State) (i : Input) => {{")?;
+    write!(out, "false")?;
     for &bad in sys.bad_states.iter() {
-        let bad_str = translate_expr(ctx, bad, "c");
-        write!(out, " ∨ {bad_str}")?;
+        // TODO: investigate whethe inputs can be in bad state formula
+        let bad_str = translate_expr(ctx, bad, "s");
+        write!(out, " || {bad_str}")?;
     }
     writeln!(out)?;
-    writeln!(out)?;
+    writeln!(out, "  }},")?;
+    writeln!(out, "}}")?;
 
-    // Create final safety theorem
+    // Write top-level safety theorem
+    writeln!(out)?;
     writeln!(
         out,
-        "theorem {sys_name}_safe : ∀(t : List ({sys_name})), (∀c ∈ t, Circuit.Assump c) -> Trace t -> (∀c ∈ t, ¬(bad c)) := by sorry"
+        "theorem {sys_name}_safe : {sys_name}_sys.safe := by sorry"
     )
 }
 
@@ -182,8 +209,7 @@ pub fn translate(
     };
     writeln!(out, "-- generated by patronus-lean")?;
     writeln!(out)?;
-    writeln!(out, "import PdrLean.Trace")?;
-    writeln!(out, "import PdrLean.Circuit")?;
+    writeln!(out, "import HwFormal.TransSys")?;
     writeln!(out)?;
     writeln!(out, "namespace {sys_name}")?;
     writeln!(out)?;
