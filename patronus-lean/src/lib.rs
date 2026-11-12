@@ -45,51 +45,37 @@ fn translate_expr(
                 translate_expr(ctx, *a, state_names, input_names),
                 translate_expr(ctx, *b, state_names, input_names),
             );
-            format!("({a_str} == {b_str})")
+            format!("(BitVec.ofBool ({a_str} == {b_str}))")
         }
         Expr::BVAnd(a, b, _width) => {
             let (a_str, b_str) = (
-                {
-                    let str = translate_expr(ctx, *a, state_names, input_names);
-                    if str == "1#1" {
-                        String::from("true")
-                    } else if str == "0#1" {
-                        String::from("false")
-                    } else {
-                        str
-                    }
-                },
-                {
-                    let str = translate_expr(ctx, *b, state_names, input_names);
-                    if str == "1#1" {
-                        String::from("true")
-                    } else if str == "0#1" {
-                        String::from("false")
-                    } else {
-                        str
-                    }
-                },
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
             );
-            format!("({a_str} && {b_str})")
+            format!("({a_str} &&& {b_str})")
         }
         Expr::BVGreater(a, b) => {
             let (a_str, b_str) = (
                 translate_expr(ctx, *a, state_names, input_names),
                 translate_expr(ctx, *b, state_names, input_names),
             );
-            format!("({a_str} > {b_str})")
+            format!("(BitVec.ofBool ({a_str} > {b_str}))")
         }
         Expr::BVIte { cond, tru, fals } => {
-            let (cond_str, tru_str, fals_str) = (
-                translate_expr(ctx, *cond, state_names, input_names),
+            let cond_str = {
+                let cond_str = translate_expr(ctx, *cond, state_names, input_names);
+                format!("({cond_str} == 1#1)")
+            };
+            let (tru_str, fals_str) = (
                 translate_expr(ctx, *tru, state_names, input_names),
                 translate_expr(ctx, *fals, state_names, input_names),
             );
+
             format!("(if {cond_str} then {tru_str} else {fals_str})")
         }
         Expr::BVNot(e, _width) => {
             let e_str = translate_expr(ctx, *e, state_names, input_names);
-            format!("!({e_str})")
+            format!("~~~({e_str})")
         }
         _ => unimplemented!(),
     }
@@ -188,9 +174,8 @@ fn translate_system(
     writeln!(out, "  bad := fun (s : State) (i : Input) => (")?;
     write!(out, "    false")?;
     for &bad in sys.bad_states.iter() {
-        // TODO: investigate whethe inputs can be in bad state formula
         let bad_str = translate_expr(ctx, bad, &("s", &state_set), &("i", &input_names));
-        write!(out, " || {bad_str}")?;
+        write!(out, " || ({bad_str} == 1#1)")?;
     }
     writeln!(out)?;
     writeln!(out, "  ),")?;
