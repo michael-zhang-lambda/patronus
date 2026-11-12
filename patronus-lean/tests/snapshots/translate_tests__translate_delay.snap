@@ -28,7 +28,7 @@ def Delay_sys : TransSys State Input State := {
   },
   constraint := fun _ _ => true,
   bad := fun (s : State) (i : Input) => (
-    false || (true && !(!(((s.reg0 == 0#1) && (s.reg1 == 1#1)))))
+    false || ((1#1 &&& ~~~(~~~(((BitVec.ofBool (s.reg0 == 0#1)) &&& (BitVec.ofBool (s.reg1 == 1#1)))))) == 1#1)
   ),
 }
 

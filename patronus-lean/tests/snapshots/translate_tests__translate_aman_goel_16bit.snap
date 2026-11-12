@@ -23,12 +23,12 @@ def aman_goel_16bit_sys : TransSys State Input State := {
     v := 1#16
   },
   next := fun (s : State) (i : Input) => {
-    u := (if (s.v > s.u) then (s.u + s.v) else (s.v + 1#16))
+    u := (if ((BitVec.ofBool (s.v > s.u)) == 1#1) then (s.u + s.v) else (s.v + 1#16))
     v := (s.v + 1#16)
   },
   constraint := fun _ _ => true,
   bad := fun (s : State) (i : Input) => (
-    false || (true && !(!(((s.u + s.v) == 1#16))))
+    false || ((1#1 &&& ~~~(~~~((BitVec.ofBool ((s.u + s.v) == 1#16))))) == 1#1)
   ),
 }
 

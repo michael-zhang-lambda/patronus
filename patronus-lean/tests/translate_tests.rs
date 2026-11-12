@@ -34,3 +34,10 @@ fn translate_overflow() {
     let lean = patronus_lean::translate_to_str(&ctx, &sys);
     insta::assert_snapshot!(lean);
 }
+
+#[test]
+fn translate_accumulate() {
+    let (ctx, sys) = btor2::parse_file("../inputs/verilog_tests/Accumulate.btor").unwrap();
+    let lean = patronus_lean::translate_to_str(&ctx, &sys);
+    insta::assert_snapshot!(lean);
+}
