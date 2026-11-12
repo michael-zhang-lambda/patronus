@@ -5,11 +5,16 @@
 use baa::BitVecOps;
 use patronus::expr::{Context, Expr, ExprRef, Type, TypeCheck};
 use patronus::system::{State, TransitionSystem};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::io::Write;
 
 /// Translate BTOR expression into Lean expression
-fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
+fn translate_expr(
+    ctx: &Context,
+    expr: ExprRef,
+    state_names: &(&str, &FxHashSet<String>),
+    input_names: &(&str, &FxHashSet<String>),
+) -> String {
     match &ctx[expr] {
         Expr::BVLiteral(lit) => {
             let width = lit.width();
@@ -19,26 +24,33 @@ fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
         }
         Expr::BVSymbol { name, width: _ } => {
             let name = ctx[name.to_owned()].clone();
+            let prefix = if state_names.1.contains(&name) {
+                state_names.0
+            } else if input_names.1.contains(&name) {
+                input_names.0
+            } else {
+                unreachable!()
+            };
             format!("{prefix}.{name}")
         }
         Expr::BVAdd(a, b, _width) => {
             let (a_str, b_str) = (
-                translate_expr(ctx, *a, prefix),
-                translate_expr(ctx, *b, prefix),
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
             );
             format!("({a_str} + {b_str})")
         }
         Expr::BVEqual(a, b) => {
             let (a_str, b_str) = (
-                translate_expr(ctx, *a, prefix),
-                translate_expr(ctx, *b, prefix),
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
             );
             format!("({a_str} == {b_str})")
         }
         Expr::BVAnd(a, b, _width) => {
             let (a_str, b_str) = (
                 {
-                    let str = translate_expr(ctx, *a, prefix);
+                    let str = translate_expr(ctx, *a, state_names, input_names);
                     if str == "1#1" {
                         String::from("true")
                     } else if str == "0#1" {
@@ -48,7 +60,7 @@ fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
                     }
                 },
                 {
-                    let str = translate_expr(ctx, *b, prefix);
+                    let str = translate_expr(ctx, *b, state_names, input_names);
                     if str == "1#1" {
                         String::from("true")
                     } else if str == "0#1" {
@@ -62,22 +74,22 @@ fn translate_expr(ctx: &Context, expr: ExprRef, prefix: &str) -> String {
         }
         Expr::BVGreater(a, b) => {
             let (a_str, b_str) = (
-                translate_expr(ctx, *a, prefix),
-                translate_expr(ctx, *b, prefix),
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
             );
             format!("({a_str} > {b_str})")
         }
         Expr::BVIte { cond, tru, fals } => {
             let (cond_str, tru_str, fals_str) = (
-                translate_expr(ctx, *cond, prefix),
-                translate_expr(ctx, *tru, prefix),
-                translate_expr(ctx, *fals, prefix),
+                translate_expr(ctx, *cond, state_names, input_names),
+                translate_expr(ctx, *tru, state_names, input_names),
+                translate_expr(ctx, *fals, state_names, input_names),
             );
             format!("(if {cond_str} then {tru_str} else {fals_str})")
         }
         Expr::BVNot(e, _width) => {
-            let e_str = translate_expr(ctx, *e, prefix);
-            format!("¬({e_str})")
+            let e_str = translate_expr(ctx, *e, state_names, input_names);
+            format!("!({e_str})")
         }
         _ => unimplemented!(),
     }
@@ -92,6 +104,7 @@ fn translate_system(
 ) -> std::io::Result<()> {
     let (mut state_ct, mut input_ct) = (0u64, 0u64);
     let mut state_names: FxHashMap<State, String> = FxHashMap::default();
+    let mut input_names: FxHashSet<String> = FxHashSet::default();
 
     writeln!(out, "structure State where")?;
     writeln!(out, "  mk ::")?;
@@ -116,7 +129,6 @@ fn translate_system(
         };
     }
     writeln!(out)?;
-    writeln!(out)?;
 
     writeln!(out, "structure Input where")?;
     writeln!(out, "  mk ::")?;
@@ -130,6 +142,8 @@ fn translate_system(
             name
         };
 
+        input_names.insert(name.clone());
+
         // Write appropriate field definition
         // NOTE: arrays are ignored for now
         match input.get_type(ctx) {
@@ -138,14 +152,15 @@ fn translate_system(
         };
     }
     writeln!(out)?;
-    writeln!(out)?;
+
+    let state_set: FxHashSet<String> = state_names.values().cloned().collect();
 
     writeln!(out, "def {sys_name}_sys : TransSys State Input State := {{")?;
     writeln!(out, "  init := fun (o : State) => {{")?;
     for (state, name) in state_names.iter() {
         if let Some(init) = state.init {
             // State has explicit initial expression
-            let init_str = translate_expr(ctx, init, "");
+            let init_str = translate_expr(ctx, init, &("s", &state_set), &("i", &input_names));
             writeln!(out, "    {name} := {init_str}")?;
         } else {
             // State has no explicit initial expression: let oracle decide
@@ -154,11 +169,11 @@ fn translate_system(
     }
     writeln!(out, "  }},")?;
 
-    writeln!(out, "next := fun (s : State) (i : Input) => {{")?;
+    writeln!(out, "  next := fun (s : State) (i : Input) => {{")?;
     for (state, name) in state_names.iter() {
         if let Some(next) = state.next {
             // State has explicit transition
-            let next_str = translate_expr(ctx, next, "s");
+            let next_str = translate_expr(ctx, next, &("s", &state_set), &("i", &input_names));
             writeln!(out, "    {name} := {next_str}")?;
         } else {
             // State does not transition: preserve old state
@@ -168,17 +183,17 @@ fn translate_system(
     writeln!(out, "  }},")?;
 
     // NOTE: constraints are ignored for now
-    writeln!(out, "constraint := fun _ _ => true,")?;
+    writeln!(out, "  constraint := fun _ _ => true,")?;
 
-    writeln!(out, "bad := fun (s : State) (i : Input) => {{")?;
-    write!(out, "false")?;
+    writeln!(out, "  bad := fun (s : State) (i : Input) => (")?;
+    write!(out, "    false")?;
     for &bad in sys.bad_states.iter() {
         // TODO: investigate whethe inputs can be in bad state formula
-        let bad_str = translate_expr(ctx, bad, "s");
+        let bad_str = translate_expr(ctx, bad, &("s", &state_set), &("i", &input_names));
         write!(out, " || {bad_str}")?;
     }
     writeln!(out)?;
-    writeln!(out, "  }},")?;
+    writeln!(out, "  ),")?;
     writeln!(out, "}}")?;
 
     // Write top-level safety theorem
