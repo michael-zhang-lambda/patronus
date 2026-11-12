@@ -146,7 +146,7 @@ fn translate_system(
     for (state, name) in state_names.iter() {
         if let Some(init) = state.init {
             // State has explicit initial expression
-            let init_str = translate_expr(ctx, init, &("s", &state_set), &("i", &input_names));
+            let init_str = translate_expr(ctx, init, &("o", &state_set), &("i", &input_names));
             writeln!(out, "    {name} := {init_str}")?;
         } else {
             // State has no explicit initial expression: let oracle decide
