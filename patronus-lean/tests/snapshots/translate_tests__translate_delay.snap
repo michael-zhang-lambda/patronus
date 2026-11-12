@@ -10,25 +10,25 @@ namespace Delay
 
 structure State where
   mk ::
-  reg0 : BitVec 1
-  reg1 : BitVec 1
+  «reg0» : BitVec 1
+  «reg1» : BitVec 1
 
 structure Input where
   mk ::
-  clk : BitVec 1
+  «clk» : BitVec 1
 
 def Delay_sys : TransSys State Input State := {
   init := fun (o : State) => {
-    reg1 := 0#1
-    reg0 := 0#1
+    «reg0» := 0#1
+    «reg1» := 0#1
   },
   next := fun (s : State) (i : Input) => {
-    reg1 := s.reg0
-    reg0 := 1#1
+    «reg0» := 1#1
+    «reg1» := s.«reg0»
   },
   constraint := fun _ _ => true,
   bad := fun (s : State) (i : Input) => (
-    false || ((1#1 &&& ~~~(~~~(((BitVec.ofBool (s.reg0 == 0#1)) &&& (BitVec.ofBool (s.reg1 == 1#1)))))) == 1#1)
+    false || ((1#1 &&& ~~~(~~~(((BitVec.ofBool (s.«reg0» == 0#1)) &&& (BitVec.ofBool (s.«reg1» == 1#1)))))) == 1#1)
   ),
 }
 

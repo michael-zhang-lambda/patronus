@@ -5,10 +5,21 @@
 use baa::BitVecOps;
 use patronus::expr::{Context, Expr, ExprRef, Type, TypeCheck};
 use patronus::system::{State, TransitionSystem};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
+
+pub mod cosim;
 use std::io::Write;
 
-/// Translate BTOR expression into Lean expression
+const ESCAPE_L: &str = "«";
+const ESCAPE_R: &str = "»";
+
+/// Escape BTOR name `name` to Lean name
+#[inline]
+fn escape_name(name: String) -> String {
+    format!("{ESCAPE_L}{name}{ESCAPE_R}")
+}
+
+/// Translate BTOR expression into Lean expression string
 fn translate_expr(
     ctx: &Context,
     expr: ExprRef,
@@ -31,7 +42,8 @@ fn translate_expr(
             } else {
                 unreachable!()
             };
-            format!("{prefix}.{name}")
+            let esc_name = escape_name(name);
+            format!("{prefix}.{esc_name}")
         }
         Expr::BVAdd(a, b, _width) => {
             let (a_str, b_str) = (
@@ -81,6 +93,50 @@ fn translate_expr(
     }
 }
 
+/// Lean field names of the states, in declaration order
+pub type StateNames = Vec<(State, String)>;
+/// Lean field names of the inputs, in declaration order
+pub type InputNames = Vec<(ExprRef, String)>;
+
+/// Assign a Lean field name to every state and input of `sys`, in declaration order
+///
+/// Signals with a symbol name keep it; unnamed ones get `state{n}` / `input{n}`
+pub fn signal_names(ctx: &Context, sys: &TransitionSystem) -> (StateNames, InputNames) {
+    let mut state_ct = 0u64;
+    let states = sys
+        .states
+        .iter()
+        .map(|state| {
+            let name = if let Some(name) = ctx.get_symbol_name(state.symbol) {
+                name.to_string()
+            } else {
+                let name = format!("state{state_ct}");
+                state_ct += 1;
+                name
+            };
+            (*state, name)
+        })
+        .collect();
+
+    let mut input_ct = 0u64;
+    let inputs = sys
+        .inputs
+        .iter()
+        .map(|&input| {
+            let name = if let Some(name) = ctx.get_symbol_name(input) {
+                name.to_string()
+            } else {
+                let name = format!("input{input_ct}");
+                input_ct += 1;
+                name
+            };
+            (input, name)
+        })
+        .collect();
+
+    (states, inputs)
+}
+
 /// Translate stateful elements into Lean `structure` text
 fn translate_system(
     ctx: &Context,
@@ -88,29 +144,15 @@ fn translate_system(
     sys_name: &str,
     out: &mut impl Write,
 ) -> std::io::Result<()> {
-    let (mut state_ct, mut input_ct) = (0u64, 0u64);
-    let mut state_names: FxHashMap<State, String> = FxHashMap::default();
-    let mut input_names: FxHashSet<String> = FxHashSet::default();
+    let (state_names, input_list) = signal_names(ctx, sys);
 
     writeln!(out, "structure State where")?;
     writeln!(out, "  mk ::")?;
-    for state in sys.states.iter() {
-        // Get human-readable name of state, or assign default name
-        let name = if let Some(name) = ctx.get_symbol_name(state.symbol) {
-            name.to_string()
-        } else {
-            let name = format!("state{state_ct}");
-            state_ct += 1;
-            name
-        };
-
-        // Add name entry to map
-        state_names.insert(*state, name.clone());
-
-        // Write appropriate field definition
+    for (state, name) in state_names.iter() {
         // NOTE: arrays are ignored for now
+        let esc_name = escape_name(name.clone());
         match state.symbol.get_type(ctx) {
-            Type::BV(width) => writeln!(out, "  {name} : BitVec {width}")?,
+            Type::BV(width) => writeln!(out, "  {esc_name} : BitVec {width}")?,
             Type::Array(_) => unimplemented!(),
         };
     }
@@ -118,52 +160,44 @@ fn translate_system(
 
     writeln!(out, "structure Input where")?;
     writeln!(out, "  mk ::")?;
-    for input in sys.inputs.iter() {
-        // Get human-readable name of input, or assign default name
-        let name = if let Some(name) = ctx.get_symbol_name(*input) {
-            name.to_string()
-        } else {
-            let name = format!("input{input_ct}");
-            input_ct += 1;
-            name
-        };
-
-        input_names.insert(name.clone());
-
-        // Write appropriate field definition
+    for (input, name) in input_list.iter() {
         // NOTE: arrays are ignored for now
+        let esc_name = escape_name(name.clone());
         match input.get_type(ctx) {
-            Type::BV(width) => writeln!(out, "  {name} : BitVec {width}")?,
+            Type::BV(width) => writeln!(out, "  {esc_name} : BitVec {width}")?,
             Type::Array(_) => unimplemented!(),
         };
     }
     writeln!(out)?;
 
-    let state_set: FxHashSet<String> = state_names.values().cloned().collect();
+    let input_names: FxHashSet<String> = input_list.iter().map(|(_, n)| n.clone()).collect();
+    let state_set: FxHashSet<String> = state_names.iter().map(|(_, n)| n.clone()).collect();
 
     writeln!(out, "def {sys_name}_sys : TransSys State Input State := {{")?;
     writeln!(out, "  init := fun (o : State) => {{")?;
     for (state, name) in state_names.iter() {
+        let esc_name = escape_name(name.clone());
         if let Some(init) = state.init {
             // State has explicit initial expression
             let init_str = translate_expr(ctx, init, &("o", &state_set), &("i", &input_names));
-            writeln!(out, "    {name} := {init_str}")?;
+            writeln!(out, "    {esc_name} := {init_str}")?;
         } else {
             // State has no explicit initial expression: let oracle decide
-            writeln!(out, "    {name} := o.{name}")?;
+            writeln!(out, "    {esc_name} := o.{esc_name}")?;
         }
     }
     writeln!(out, "  }},")?;
 
     writeln!(out, "  next := fun (s : State) (i : Input) => {{")?;
     for (state, name) in state_names.iter() {
+        let esc_name = escape_name(name.clone());
         if let Some(next) = state.next {
             // State has explicit transition
             let next_str = translate_expr(ctx, next, &("s", &state_set), &("i", &input_names));
-            writeln!(out, "    {name} := {next_str}")?;
+            writeln!(out, "    {esc_name} := {next_str}")?;
         } else {
             // State does not transition: preserve old state
-            writeln!(out, "    {name} := s.{name}")?;
+            writeln!(out, "    {esc_name} := s.{esc_name}")?;
         }
     }
     writeln!(out, "  }},")?;
@@ -189,14 +223,14 @@ fn translate_system(
     )
 }
 
-/// Translate `sys` into Lean and returns the source as a string.
+/// Translate `sys` into Lean and returns the source as a string
 pub fn translate_to_str(ctx: &Context, sys: &TransitionSystem) -> String {
     let mut buf = Vec::new();
     translate(ctx, sys, &mut buf).expect("writing to an in-memory buffer cannot fail");
     String::from_utf8(buf).expect("generated Lean is valid UTF-8")
 }
 
-/// Translate `sys` into Lean and writes the source to `out`.
+/// Translate `sys` into Lean and writes the source to `out`
 pub fn translate(
     ctx: &Context,
     sys: &TransitionSystem,

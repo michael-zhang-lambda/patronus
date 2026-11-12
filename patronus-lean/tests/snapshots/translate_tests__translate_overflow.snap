@@ -10,22 +10,22 @@ namespace Overflow
 
 structure State where
   mk ::
-  count : BitVec 2
+  «count» : BitVec 2
 
 structure Input where
   mk ::
-  clk : BitVec 1
+  «clk» : BitVec 1
 
 def Overflow_sys : TransSys State Input State := {
   init := fun (o : State) => {
-    count := 2#2
+    «count» := 2#2
   },
   next := fun (s : State) (i : Input) => {
-    count := (s.count + 1#2)
+    «count» := (s.«count» + 1#2)
   },
   constraint := fun _ _ => true,
   bad := fun (s : State) (i : Input) => (
-    false || ((1#1 &&& ~~~(~~~((BitVec.ofBool (s.count == 0#2))))) == 1#1)
+    false || ((1#1 &&& ~~~(~~~((BitVec.ofBool (s.«count» == 0#2))))) == 1#1)
   ),
 }
 
