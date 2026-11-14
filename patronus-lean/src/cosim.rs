@@ -57,7 +57,7 @@ pub fn random_trace(ctx: &Context, sys: &TransitionSystem, steps: usize, seed: u
 
     // use a different stream than the one the interpreter used for initialization
     let mut rng = SmallRng::seed_from_u64(seed ^ 0x9e37_79b9_7f4a_7c15);
-    let inputs = (0..steps)
+    let inputs = (0..=steps)
         .map(|_| {
             inputs
                 .iter()
@@ -88,7 +88,18 @@ pub fn rust_states(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Vec<
             .iter()
             .map(|(state, name)| format!("{name}={}", bv_value(sim, state.symbol).to_dec_str()))
             .collect::<Vec<_>>()
-            .join(" ")
+            .join(", ")
+    };
+    let trace_line = |cycle: u64, sys: &TransitionSystem, sim: &Interpreter| -> String {
+        let bad = sys.bad_states.iter().any(|&b| bv_value(sim, b).is_true());
+        let cons = sys.constraints.iter().all(|&c| bv_value(sim, c).is_true());
+        format!(
+            "{}, {}, bad={}, constraint={}",
+            cycle,
+            state_line(sim),
+            bad as u8,
+            cons as u8
+        )
     };
 
     // Same initialization the oracle was derived from: Lean's `init o` must reproduce this
@@ -101,16 +112,16 @@ pub fn rust_states(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Vec<
     }
 
     let mut lines = Vec::with_capacity(trace.inputs.len() + 1);
-    for step_inputs in trace.inputs.iter() {
+    for (cycle, step_inputs) in trace.inputs.iter().enumerate() {
         for ((expr, name), (iname, value)) in inputs.iter().zip(step_inputs.iter()) {
             assert_eq!(name, iname, "trace inputs do not match system inputs");
             sim.set(*expr, value);
         }
-        let bad = sys.bad_states.iter().any(|&b| bv_value(&sim, b).is_true());
-        lines.push(format!("{} bad={}", state_line(&sim), bad as u8));
+        lines.push(trace_line(cycle as u64, sys, &sim));
         sim.step();
     }
-    lines.push(state_line(&sim));
+    // Add last state in trace
+    lines.push(trace_line(trace.inputs.len() as u64, sys, &sim));
     lines
 }
 
@@ -161,31 +172,15 @@ pub fn lean_harness(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Str
         .iter()
         .map(|n| format!("{n}={{s.{n}.toNat}}"))
         .collect::<Vec<_>>()
-        .join(" ");
-    writeln!(
-        w,
-        "def State.cosimLine (s : State) : String := s!\"{line}\""
-    )
-    .unwrap();
+        .join(", ");
+    writeln!(w, "instance : ToString State where").unwrap();
+    writeln!(w, "  toString (s : State) : String := s!\"{line}\"").unwrap();
     writeln!(w).unwrap();
     writeln!(w, "end {sys_name}").unwrap();
     writeln!(w).unwrap();
     writeln!(w, "def main : IO Unit := do").unwrap();
     writeln!(w, "  IO.println \"{LEAN_TRACE_MARKER}\"").unwrap();
-    writeln!(
-        w,
-        "  let states := {sys_name}.{sys_name}_sys.simulate {sys_name}.cosimOracle {sys_name}.cosimInputs"
-    )
-    .unwrap();
-    writeln!(w, "  for (s, i) in states.zip {sys_name}.cosimInputs do").unwrap();
-    writeln!(
-        w,
-        "    IO.println s!\"{{s.cosimLine}} bad={{if {sys_name}.{sys_name}_sys.bad s i then 1 else 0}}\""
-    )
-    .unwrap();
-    writeln!(w, "  match states.getLast? with").unwrap();
-    writeln!(w, "  | some s => IO.println s.cosimLine").unwrap();
-    writeln!(w, "  | none => pure ()").unwrap();
+    writeln!(w, "  IO.println ({sys_name}.{sys_name}_sys.formatTrace {sys_name}.cosimOracle {sys_name}.cosimInputs)").unwrap();
     out
 }
 
