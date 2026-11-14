@@ -20,7 +20,7 @@ structure Input where
   «clk» : BitVec 1
 
 def Accumulate_sys : TransSys State Input State := {
-  init := fun (o : State) => {
+  init := fun (o : State) (i : Input) => {
     «x» := 0#4
     «y» := 0#4
   },

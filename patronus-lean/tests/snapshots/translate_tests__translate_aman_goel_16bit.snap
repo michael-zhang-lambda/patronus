@@ -18,7 +18,7 @@ structure Input where
   «clk» : BitVec 1
 
 def aman_goel_16bit_sys : TransSys State Input State := {
-  init := fun (o : State) => {
+  init := fun (o : State) (i : Input) => {
     «u» := 1#16
     «v» := 1#16
   },

@@ -174,7 +174,7 @@ fn translate_system(
     let state_set: FxHashSet<String> = state_names.iter().map(|(_, n)| n.clone()).collect();
 
     writeln!(out, "def {sys_name}_sys : TransSys State Input State := {{")?;
-    writeln!(out, "  init := fun (o : State) => {{")?;
+    writeln!(out, "  init := fun (o : State) (i : Input) => {{")?;
     for (state, name) in state_names.iter() {
         let esc_name = escape_name(name.clone());
         if let Some(init) = state.init {

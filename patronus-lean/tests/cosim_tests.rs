@@ -83,7 +83,7 @@ fn fmt_values(values: &[(String, BitVecValue)]) -> String {
         .iter()
         .map(|(n, v)| format!("{n}={}", v.to_dec_str()))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(", ")
 }
 
 /// Set `COSIM_KEEP=1` to keep the generated harness files even when the traces match.

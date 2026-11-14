@@ -120,8 +120,6 @@ pub fn rust_states(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Vec<
         lines.push(trace_line(cycle as u64, sys, &sim));
         sim.step();
     }
-    // Add last state in trace
-    lines.push(trace_line(trace.inputs.len() as u64, sys, &sim));
     lines
 }
 

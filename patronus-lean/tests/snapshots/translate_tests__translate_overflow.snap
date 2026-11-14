@@ -17,7 +17,7 @@ structure Input where
   «clk» : BitVec 1
 
 def Overflow_sys : TransSys State Input State := {
-  init := fun (o : State) => {
+  init := fun (o : State) (i : Input) => {
     «count» := 2#2
   },
   next := fun (s : State) (i : Input) => {

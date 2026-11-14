@@ -18,7 +18,7 @@ structure Input where
   «clk» : BitVec 1
 
 def Swap_sys : TransSys State Input State := {
-  init := fun (o : State) => {
+  init := fun (o : State) (i : Input) => {
     «a» := 0#1
     «b» := 1#1
   },

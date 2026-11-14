@@ -18,7 +18,7 @@ structure Input where
   «clk» : BitVec 1
 
 def Delay_sys : TransSys State Input State := {
-  init := fun (o : State) => {
+  init := fun (o : State) (i : Input) => {
     «reg0» := 0#1
     «reg1» := 0#1
   },
