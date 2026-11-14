@@ -1,0 +1,10 @@
+name = "hw-formal"
+version = "0.1.0"
+defaultTargets = ["hw-formal"]
+
+[[lean_lib]]
+name = "HwFormal"
+
+[[lean_exe]]
+name = "hw-formal"
+root = "Main"

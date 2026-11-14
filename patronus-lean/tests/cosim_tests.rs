@@ -3,7 +3,7 @@
 //! Co-simulates the generated Lean model (`TransSys.simulate`) against the patronus interpreter.
 //!
 //! Requires `lake` and the hw-formal Lean project (`$HW_FORMAL_DIR`, default
-//! `~/cornell/research/lean/hw-formal`). If either is missing the tests print a skip message
+//! `patronus-lean/hw-formal`). If either is missing the tests print a skip message
 //! and pass.
 
 use baa::{BitVecOps, BitVecValue};
@@ -21,7 +21,7 @@ const SEEDS: [u64; 3] = [0, 1, 0xdead_beef];
 fn hw_formal_dir() -> Option<PathBuf> {
     let dir = match std::env::var_os("HW_FORMAL_DIR") {
         Some(d) => PathBuf::from(d),
-        None => PathBuf::from(std::env::var_os("HOME")?).join("cornell/research/lean/hw-formal"),
+        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("hw-formal"),
     };
     let is_lake_project = dir.join("lakefile.toml").exists() || dir.join("lakefile.lean").exists();
     is_lake_project.then_some(dir)
