@@ -27,23 +27,29 @@ fn hw_formal_dir() -> Option<PathBuf> {
     is_lake_project.then_some(dir)
 }
 
+/// Print a skip message, or panic if `PATRONUS_REQUIRE_LEAN` is set (used in CI so that a
+/// missing Lean toolchain fails the build instead of silently skipping the co-simulation).
+fn skip(msg: &str) -> Option<PathBuf> {
+    if std::env::var_os("PATRONUS_REQUIRE_LEAN").is_some() {
+        panic!("{msg} (PATRONUS_REQUIRE_LEAN is set)");
+    }
+    eprintln!("SKIP: {msg}");
+    None
+}
+
 /// Locate the Lean project and build `HwFormal` once. Returns `None` (skip) if unavailable.
 fn lean_env() -> Option<&'static PathBuf> {
     static ENV: OnceLock<Option<PathBuf>> = OnceLock::new();
     ENV.get_or_init(|| {
         let Some(dir) = hw_formal_dir() else {
-            eprintln!("SKIP: hw-formal Lean project not found (set HW_FORMAL_DIR)");
-            return None;
+            return skip("hw-formal Lean project not found (set HW_FORMAL_DIR)");
         };
         match Command::new("lake")
             .args(["build", "HwFormal"])
             .current_dir(&dir)
             .output()
         {
-            Err(e) => {
-                eprintln!("SKIP: could not run `lake`: {e}");
-                None
-            }
+            Err(e) => skip(&format!("could not run `lake`: {e}")),
             Ok(out) if !out.status.success() => panic!(
                 "`lake build HwFormal` failed in {}:\n{}{}",
                 dir.display(),

@@ -328,6 +328,32 @@ jobs:
         working-directory: python
         run: uv run pytest
 
+  lean-cosim:
+    name: Lean Translation and Co-Simulation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set Up Lean and build hw-formal
+        # installs elan + the toolchain from lean-toolchain, puts `lake` on PATH, runs `lake build`
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: patronus-lean/hw-formal
+      - name: Update Rust to ${{ matrix.toolchain }}
+        run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
+      - name: Build
+        run: cargo build --verbose -p patronus-lean
+      - name: Run translation and co-simulation tests
+        run: cargo test --verbose -p patronus-lean
+        env:
+          # fail (rather than skip) the cosim tests if Lean is unavailable
+          PATRONUS_REQUIRE_LEAN: 1
+
   semver:
     name: Check Semantic Versioning of Patronus
     runs-on: ubuntu-24.04
