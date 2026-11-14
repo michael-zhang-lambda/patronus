@@ -41,3 +41,38 @@ fn translate_accumulate() {
     let lean = patronus_lean::translate_to_str(&ctx, &sys);
     insta::assert_snapshot!(lean);
 }
+
+#[test]
+fn translate_memory() {
+    let (ctx, sys) = btor2::parse_file("../inputs/verilog_tests/Memory.btor").unwrap();
+    let lean = patronus_lean::translate_to_str(&ctx, &sys);
+    insta::assert_snapshot!(lean);
+}
+
+#[test]
+fn translate_memory_init() {
+    let (ctx, sys) = btor2::parse_file("../inputs/verilog_tests/MemoryInit.btor").unwrap();
+    let lean = patronus_lean::translate_to_str(&ctx, &sys);
+    insta::assert_snapshot!(lean);
+}
+
+#[test]
+fn translate_memory_pair() {
+    let (ctx, sys) = btor2::parse_file("../inputs/verilog_tests/MemoryPair.btor").unwrap();
+    let lean = patronus_lean::translate_to_str(&ctx, &sys);
+    insta::assert_snapshot!(lean);
+}
+
+#[test]
+fn translate_memory_unsafe() {
+    let (ctx, sys) = btor2::parse_file("../inputs/verilog_tests/MemoryUnsafe.btor").unwrap();
+    let lean = patronus_lean::translate_to_str(&ctx, &sys);
+    insta::assert_snapshot!(lean);
+}
+
+#[test]
+fn translate_array_equal() {
+    let (ctx, sys) = btor2::parse_file("../inputs/unittest/array_equal.btor").unwrap();
+    let lean = patronus_lean::translate_to_str(&ctx, &sys);
+    insta::assert_snapshot!(lean);
+}

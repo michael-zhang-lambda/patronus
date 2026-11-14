@@ -35,7 +35,7 @@ fn translate_expr(
         }
         Expr::ArrayConstant { e, index_width, .. } => {
             let e_str = translate_expr(ctx, *e, state_names, input_names);
-            format!("BVArray.const (iw := {index_width}) {e_str}")
+            format!("(BVArray.const (iw := {index_width}) {e_str})")
         }
         Expr::BVSymbol { name, .. } | Expr::ArraySymbol { name, .. } => {
             let name = ctx[name.to_owned()].clone();
@@ -44,7 +44,7 @@ fn translate_expr(
             } else if input_names.1.contains(&name) {
                 input_names.0
             } else {
-                panic!("bitvector symbol must be state or input")
+                panic!("symbol must be state or input")
             };
             let esc_name = escape_name(name);
             format!("{prefix}.{esc_name}")
@@ -69,6 +69,13 @@ fn translate_expr(
                 translate_expr(ctx, *b, state_names, input_names),
             );
             format!("({a_str} &&& {b_str})")
+        }
+        Expr::BVOr(a, b, _width) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("({a_str} ||| {b_str})")
         }
         Expr::BVGreater(a, b) => {
             let (a_str, b_str) = (
@@ -113,7 +120,7 @@ fn translate_expr(
                 translate_expr(ctx, *a, state_names, input_names),
                 translate_expr(ctx, *b, state_names, input_names),
             );
-            format!("(BVArray.equals {a_str} {b_str})")
+            format!("(BitVec.ofBool (BVArray.equals {a_str} {b_str}))")
         }
         _ => unimplemented!(),
     }
