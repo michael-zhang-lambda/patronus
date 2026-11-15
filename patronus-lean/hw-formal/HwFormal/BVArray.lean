@@ -17,6 +17,14 @@ def write (a : BVArray iw dw) (i : BitVec iw) (v : BitVec dw) : BVArray iw dw :=
 def equals (a b : BVArray iw dw) : Bool :=
   (List.range (2^iw)).all (fun i => read a (BitVec.ofNat iw i) == read b (BitVec.ofNat iw i))
 
+/-- Build array from dense element list -/
+def ofList (xs : List (BitVec dw)) : BVArray iw dw :=
+  fun i => xs.getD i.toNat 0#dw
+
+/-- Return string representation of array -/
+def toString (a : BVArray iw dw) : String :=
+  "[" ++ "; ".intercalate ((List.range (2^iw)).map (fun i => ToString.toString (read a (BitVec.ofNat iw i)).toNat)) ++ "]"
+
 @[simp]
 theorem equals_iff (iw dw : Nat) (a b : BVArray iw dw) :
   equals a b ↔ a = b := by

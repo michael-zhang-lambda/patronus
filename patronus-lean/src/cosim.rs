@@ -9,8 +9,8 @@
 //! steps `0 .. n-1` (where `bad s_k i_k` is defined). The final state line has no `bad`.
 
 use crate::{signal_names, translate_to_str};
-use baa::{BitVecOps, BitVecValue};
-use patronus::expr::{Context, ExprRef, TypeCheck};
+use baa::{ArrayOps, ArrayValue, BitVecOps, BitVecValue, Value};
+use patronus::expr::{Context, Type, TypeCheck};
 use patronus::sim::{InitKind, Interpreter, Simulator};
 use patronus::system::TransitionSystem;
 use rand::SeedableRng;
@@ -27,21 +27,39 @@ pub struct Trace {
     /// Seed passed to `InitKind::Random` for the interpreter's initialization.
     pub seed: u64,
     /// Value of every state (by Lean field name) right after `init`, used as the Lean oracle `o`.
-    pub oracle: Vec<(String, BitVecValue)>,
+    pub oracle: Vec<(String, Value)>,
     /// Input values (by Lean field name) for each step.
-    pub inputs: Vec<Vec<(String, BitVecValue)>>,
+    pub inputs: Vec<Vec<(String, Value)>>,
 }
 
-fn bv_value(sim: &Interpreter, expr: ExprRef) -> BitVecValue {
-    match sim.get(expr) {
-        baa::Value::BitVec(v) => v,
-        baa::Value::Array(_) => unimplemented!("arrays are not supported"),
+fn array_elems(a: &ArrayValue) -> impl Iterator<Item = BitVecValue> + '_ {
+    (0..a.num_elements() as u64).map(|i| a.select(&BitVecValue::from_u64(i, a.index_width())))
+}
+
+pub fn val_to_string(v: &Value) -> String {
+    match v {
+        Value::BitVec(bv) => bv.to_dec_str(),
+        Value::Array(av) => format!(
+            "[{}]",
+            array_elems(av)
+                .map(|v| v.to_dec_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
     }
 }
 
-fn bv_width(ctx: &Context, expr: ExprRef) -> baa::WidthInt {
-    expr.get_bv_type(ctx)
-        .expect("only bit-vector signals are supported")
+fn val_to_lean(v: &Value) -> String {
+    match v {
+        Value::BitVec(bv) => format!("{}#{}", bv.to_dec_str(), bv.width()),
+        Value::Array(av) => {
+            let xs = array_elems(av)
+                .map(|v| format!("{}#{}", v.to_dec_str(), v.width()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("(BVArray.ofList [{xs}])")
+        }
+    }
 }
 
 /// Create a random trace: initialize with `InitKind::Random(seed)`, read the oracle from the
@@ -52,7 +70,7 @@ pub fn random_trace(ctx: &Context, sys: &TransitionSystem, steps: usize, seed: u
     sim.init(InitKind::Random(seed));
     let oracle = states
         .iter()
-        .map(|(state, name)| (name.clone(), bv_value(&sim, state.symbol)))
+        .map(|(state, name)| (name.clone(), sim.get(state.symbol)))
         .collect();
 
     // use a different stream than the one the interpreter used for initialization
@@ -64,7 +82,14 @@ pub fn random_trace(ctx: &Context, sys: &TransitionSystem, steps: usize, seed: u
                 .map(|(expr, name)| {
                     (
                         name.clone(),
-                        BitVecValue::random(&mut rng, bv_width(ctx, *expr)),
+                        match expr.get_type(ctx) {
+                            Type::BV(w) => Value::BitVec(BitVecValue::random(&mut rng, w)),
+                            Type::Array(t) => Value::Array(ArrayValue::random(
+                                &mut rng,
+                                t.index_width,
+                                t.data_width,
+                            )),
+                        },
                     )
                 })
                 .collect()
@@ -86,13 +111,19 @@ pub fn rust_states(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Vec<
     let state_line = |sim: &Interpreter| -> String {
         sorted_states
             .iter()
-            .map(|(state, name)| format!("{name}={}", bv_value(sim, state.symbol).to_dec_str()))
+            .map(|(state, name)| format!("{name}={}", val_to_string(&sim.get(state.symbol))))
             .collect::<Vec<_>>()
             .join(", ")
     };
     let trace_line = |cycle: u64, sys: &TransitionSystem, sim: &Interpreter| -> String {
-        let bad = sys.bad_states.iter().any(|&b| bv_value(sim, b).is_true());
-        let cons = sys.constraints.iter().all(|&c| bv_value(sim, c).is_true());
+        let bad = sys.bad_states.iter().any(|&b| match sim.get(b) {
+            Value::BitVec(bv) => bv.is_true(),
+            Value::Array(_) => unreachable!(),
+        });
+        let cons = sys.constraints.iter().all(|&c| match sim.get(c) {
+            Value::BitVec(bv) => bv.is_true(),
+            Value::Array(_) => unreachable!(),
+        });
         format!(
             "{}, {}, bad={}, constraint={}",
             cycle,
@@ -108,14 +139,17 @@ pub fn rust_states(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Vec<
     sim.init(InitKind::Random(trace.seed));
     for ((state, name), (oname, value)) in states.iter().zip(trace.oracle.iter()) {
         assert_eq!(name, oname, "oracle does not match system states");
-        debug_assert_eq!(&bv_value(&sim, state.symbol), value);
+        debug_assert_eq!(val_to_string(&sim.get(state.symbol)), val_to_string(value));
     }
 
     let mut lines = Vec::with_capacity(trace.inputs.len() + 1);
     for (cycle, step_inputs) in trace.inputs.iter().enumerate() {
         for ((expr, name), (iname, value)) in inputs.iter().zip(step_inputs.iter()) {
             assert_eq!(name, iname, "trace inputs do not match system inputs");
-            sim.set(*expr, value);
+            match value {
+                Value::BitVec(bv) => sim.set(*expr, bv),
+                Value::Array(av) => sim.set_array(*expr, av.clone()),
+            }
         }
         lines.push(trace_line(cycle as u64, sys, &sim));
         sim.step();
@@ -123,13 +157,13 @@ pub fn rust_states(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Vec<
     lines
 }
 
-fn lean_struct(fields: &[(String, BitVecValue)]) -> String {
+fn lean_struct(fields: &[(String, Value)]) -> String {
     if fields.is_empty() {
         return "{}".to_string();
     }
     let body = fields
         .iter()
-        .map(|(name, v)| format!("{name} := {}#{}", v.to_dec_str(), v.width()))
+        .map(|(name, v)| format!("{name} := {}", val_to_lean(v)))
         .collect::<Vec<_>>()
         .join(", ");
     format!("{{ {body} }}")
@@ -144,8 +178,8 @@ pub fn lean_harness(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Str
         sys.name.as_str()
     };
     let (states, _) = signal_names(ctx, sys);
-    let mut sorted_names: Vec<&str> = states.iter().map(|(_, n)| n.as_str()).collect();
-    sorted_names.sort();
+    let mut sorted_states: Vec<_> = states.iter().collect();
+    sorted_states.sort_by(|a, b| a.1.cmp(&b.1));
 
     let mut out = translate_to_str(ctx, sys);
     let w = &mut out;
@@ -166,9 +200,12 @@ pub fn lean_harness(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Str
     }
     writeln!(w, "]").unwrap();
     writeln!(w).unwrap();
-    let line = sorted_names
+    let line = sorted_states
         .iter()
-        .map(|n| format!("{n}={{s.{n}.toNat}}"))
+        .map(|(state, n)| match state.symbol.get_type(ctx) {
+            Type::BV(_) => format!("{n}={{s.{n}.toNat}}"),
+            Type::Array(_) => format!("{n}={{BVArray.toString s.{n}}}"),
+        })
         .collect::<Vec<_>>()
         .join(", ");
     writeln!(w, "instance : ToString State where").unwrap();

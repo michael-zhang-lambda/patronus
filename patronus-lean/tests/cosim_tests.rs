@@ -6,11 +6,13 @@
 //! `patronus-lean/hw-formal`). If either is missing the tests print a skip message
 //! and pass.
 
-use baa::{BitVecOps, BitVecValue};
+use baa::Value;
 use patronus::btor2;
 use patronus::expr::Context;
 use patronus::system::TransitionSystem;
-use patronus_lean::cosim::{Trace, lean_harness, parse_lean_output, random_trace, rust_states};
+use patronus_lean::cosim::{
+    Trace, lean_harness, parse_lean_output, random_trace, rust_states, val_to_string,
+};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
@@ -84,10 +86,10 @@ fn run_lean(dir: &PathBuf, file: &PathBuf) -> Vec<String> {
     })
 }
 
-fn fmt_values(values: &[(String, BitVecValue)]) -> String {
+fn fmt_values(values: &[(String, Value)]) -> String {
     values
         .iter()
-        .map(|(n, v)| format!("{n}={}", v.to_dec_str()))
+        .map(|(n, v)| format!("{n}={}", val_to_string(v)))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -173,6 +175,31 @@ fn cosim_overflow() {
 #[test]
 fn cosim_accumulate() {
     cosim_file("accumulate", "../inputs/verilog_tests/Accumulate.btor");
+}
+
+#[test]
+fn cosim_array_equal() {
+    cosim_file("array_equal", "../inputs/unittest/array_equal.btor");
+}
+
+#[test]
+fn cosim_memory() {
+    cosim_file("memory", "../inputs/verilog_tests/Memory.btor");
+}
+
+#[test]
+fn cosim_memory_init() {
+    cosim_file("memory_init", "../inputs/verilog_tests/MemoryInit.btor");
+}
+
+#[test]
+fn cosim_memory_pair() {
+    cosim_file("memory_pair", "../inputs/verilog_tests/MemoryPair.btor");
+}
+
+#[test]
+fn cosim_memory_unsafe() {
+    cosim_file("memory_unsafe", "../inputs/verilog_tests/MemoryUnsafe.btor");
 }
 
 /// Exercises the oracle path (a state without `init`) and an `init` expression that
