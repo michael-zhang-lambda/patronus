@@ -1,17 +1,28 @@
-/- - Array is function from bitvector index to bitvector value -/
-abbrev BVArray (iw dw : Nat) := BitVec iw → BitVec dw
+/-- Array from bitvector index to bitvector value.
+
+Wrapped in a structure (rather than an `abbrev` for the function type) so the compiler does
+not eta-expand array-valued expressions: otherwise every read of a step's array re-evaluates
+the previous step's reads, making simulation exponential in the number of steps.
+
+`tag` carries no information (`Unit` has one value, so equality is determined by `get`).
+It exists only so the compiler does not treat `BVArray` as a single-field structure, which it
+would represent as the bare function, bringing back the eta-expansion above (and likewise for
+any `State` structure whose only field is an array). -/
+structure BVArray (iw dw : Nat) where
+  get : BitVec iw → BitVec dw
+  tag : Unit := ()
 
 namespace BVArray
 
 /-- Return array with all indices initialized to one value -/
-def const (v : BitVec dw) : BVArray iw dw := fun _ => v
+def const (v : BitVec dw) : BVArray iw dw := ⟨fun _ => v, ()⟩
 
 /-- Read value at index -/
-def read (a : BVArray iw dw) (i : BitVec iw) : BitVec dw := a i
+def read (a : BVArray iw dw) (i : BitVec iw) : BitVec dw := a.get i
 
 /-- Write value at index -/
 def write (a : BVArray iw dw) (i : BitVec iw) (v : BitVec dw) : BVArray iw dw :=
-  fun j => if j == i then v else a j
+  ⟨fun j => if j == i then v else a.get j, ()⟩
 
 /-- Return whether arrays have the same elements -/
 def equals (a b : BVArray iw dw) : Bool :=
@@ -19,19 +30,27 @@ def equals (a b : BVArray iw dw) : Bool :=
 
 /-- Build array from dense element list -/
 def ofList (xs : List (BitVec dw)) : BVArray iw dw :=
-  fun i => xs.getD i.toNat 0#dw
+  ⟨fun i => xs.getD i.toNat 0#dw, ()⟩
 
 /-- Return string representation of array -/
 def toString (a : BVArray iw dw) : String :=
   "[" ++ "; ".intercalate ((List.range (2^iw)).map (fun i => ToString.toString (read a (BitVec.ofNat iw i)).toNat)) ++ "]"
 
+/-- Arrays are equal iff they agree on every read -/
+@[ext]
+theorem ext_read {a b : BVArray iw dw} (h : ∀ i, read a i = read b i) : a = b := by
+  cases a; cases b
+  congr
+  exact funext h
+
 @[simp]
 theorem equals_iff (iw dw : Nat) (a b : BVArray iw dw) :
   equals a b ↔ a = b := by
-  simp only [equals, read, List.all_eq_true, List.mem_range, beq_iff_eq]
+  simp only [equals, List.all_eq_true, List.mem_range, beq_iff_eq]
   constructor
   · intro h
-    funext j
+    apply ext_read
+    intro j
     simpa using h j.toNat j.isLt
   · rintro rfl _ _
     rfl
