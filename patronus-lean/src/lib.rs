@@ -49,12 +49,80 @@ fn translate_expr(
             let esc_name = escape_name(name);
             format!("{prefix}.{esc_name}")
         }
-        Expr::BVAdd(a, b, _width) => {
+        Expr::BVZeroExt { e, by: _, width } => {
+            let e_str = translate_expr(ctx, *e, state_names, input_names);
+            format!("(BitVec.zeroExtend {width} {e_str})")
+        }
+        Expr::BVSignExt { e, by: _, width } => {
+            let e_str = translate_expr(ctx, *e, state_names, input_names);
+            format!("(BitVec.signExtend {width} {e_str})")
+        }
+        Expr::BVSlice { e, hi, lo } => {
+            let e_str = translate_expr(ctx, *e, state_names, input_names);
+            format!("(BitVec.extractLsb {hi} {lo} {e_str})")
+        }
+        Expr::BVConcat(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("(BitVec.append {a_str} {b_str})")
+        }
+        Expr::BVAdd(a, b, _) => {
             let (a_str, b_str) = (
                 translate_expr(ctx, *a, state_names, input_names),
                 translate_expr(ctx, *b, state_names, input_names),
             );
             format!("({a_str} + {b_str})")
+        }
+        Expr::BVSub(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("({a_str} - {b_str})")
+        }
+        Expr::BVMul(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("({a_str} * {b_str})")
+        }
+        Expr::BVUnsignedDiv(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("({a_str} / {b_str})")
+        }
+        Expr::BVSignedDiv(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("(BitVec.sdiv {a_str} {b_str})")
+        }
+        Expr::BVSignedMod(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("(BitVec.smod {a_str} {b_str})")
+        }
+        Expr::BVUnsignedRem(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("(BitVec.smod {a_str} {b_str})")
+        }
+        Expr::BVSignedRem(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("({a_str} % {b_str})")
         }
         Expr::BVEqual(a, b) => {
             let (a_str, b_str) = (
@@ -77,12 +145,61 @@ fn translate_expr(
             );
             format!("({a_str} ||| {b_str})")
         }
+        Expr::BVXor(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("({a_str} ^^^ {b_str})")
+        }
+        Expr::BVShiftLeft(e, shamt, _) => {
+            let (e_str, shamt_str) = (
+                translate_expr(ctx, *e, state_names, input_names),
+                translate_expr(ctx, *shamt, state_names, input_names),
+            );
+            format!("({e_str} <<< ({shamt_str}).toNat)")
+        }
+        Expr::BVShiftRight(e, shamt, _) => {
+            let (e_str, shamt_str) = (
+                translate_expr(ctx, *e, state_names, input_names),
+                translate_expr(ctx, *shamt, state_names, input_names),
+            );
+            format!("(BitVec.ushiftRight {e_str} ({shamt_str}).toNat)")
+        }
+        Expr::BVArithmeticShiftRight(e, shamt, _) => {
+            let (e_str, shamt_str) = (
+                translate_expr(ctx, *e, state_names, input_names),
+                translate_expr(ctx, *shamt, state_names, input_names),
+            );
+            format!("({e_str} >>> ({shamt_str}).toNat)")
+        }
         Expr::BVGreater(a, b) => {
             let (a_str, b_str) = (
                 translate_expr(ctx, *a, state_names, input_names),
                 translate_expr(ctx, *b, state_names, input_names),
             );
-            format!("(BitVec.ofBool ({a_str} > {b_str}))")
+            format!("(BitVec.ofBool (BitVec.ult {b_str} {a_str}))")
+        }
+        Expr::BVGreaterSigned(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("(BitVec.ofBool (BitVec.slt {b_str} {a_str}))")
+        }
+        Expr::BVGreaterEqual(a, b) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("(BitVec.ofBool (BitVec.ule {b_str} {a_str}))")
+        }
+        Expr::BVGreaterEqualSigned(a, b, _) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("(BitVec.ofBool (BitVec.sle {b_str} {a_str}))")
         }
         Expr::BVIte { cond, tru, fals } | Expr::ArrayIte { cond, tru, fals } => {
             let cond_str = {
@@ -96,9 +213,20 @@ fn translate_expr(
 
             format!("(if {cond_str} then {tru_str} else {fals_str})")
         }
-        Expr::BVNot(e, _width) => {
+        Expr::BVImplies(a, b) => {
+            let (a_str, b_str) = (
+                translate_expr(ctx, *a, state_names, input_names),
+                translate_expr(ctx, *b, state_names, input_names),
+            );
+            format!("(~~~({a_str}) ||| {b_str})")
+        }
+        Expr::BVNot(e, _) => {
             let e_str = translate_expr(ctx, *e, state_names, input_names);
             format!("~~~({e_str})")
+        }
+        Expr::BVNegate(e, _) => {
+            let e_str = translate_expr(ctx, *e, state_names, input_names);
+            format!("-({e_str})")
         }
         Expr::BVArrayRead { array, index, .. } => {
             let (a_str, i_str) = (
@@ -122,7 +250,6 @@ fn translate_expr(
             );
             format!("(BitVec.ofBool (BVArray.equals {a_str} {b_str}))")
         }
-        _ => unimplemented!(),
     }
 }
 
