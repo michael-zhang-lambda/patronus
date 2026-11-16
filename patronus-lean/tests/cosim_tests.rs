@@ -179,7 +179,7 @@ fn cosim_accumulate() {
 
 #[test]
 fn cosim_array_equal() {
-    cosim_file("array_equal", "../inputs/unittest/array_equal.btor");
+    cosim_file("array_equal", "../inputs/verilog_tests/ArrayEqual.btor");
 }
 
 #[test]
@@ -224,4 +224,86 @@ fn cosim_uninit_state() {
     let mut ctx = Context::default();
     let sys = btor2::parse_str(&mut ctx, src, Some("Uninit")).unwrap();
     cosim("uninit_state", &ctx, &sys);
+}
+
+#[test]
+fn cosim_arith() {
+    cosim_file("arith", "../inputs/verilog_tests/Arith.btor");
+}
+
+#[test]
+fn cosim_bitwise() {
+    cosim_file("bitwise", "../inputs/verilog_tests/Bitwise.btor");
+}
+
+#[test]
+fn cosim_compare() {
+    cosim_file("compare", "../inputs/verilog_tests/Compare.btor");
+}
+
+#[test]
+fn cosim_shift() {
+    cosim_file("shift", "../inputs/verilog_tests/Shift.btor");
+}
+
+#[test]
+fn cosim_extend() {
+    cosim_file("extend", "../inputs/verilog_tests/Extend.btor");
+}
+
+/// The patronus interpreter does not implement `udiv`/`urem`/`sdiv`/`srem`/`smod` yet
+/// (`eval.rs` hits a `todo!`), so this co-simulation cannot run until it does.
+#[test]
+#[ignore = "patronus interpreter lacks div/rem support"]
+fn cosim_divide() {
+    cosim_file("divide", "../inputs/verilog_tests/Divide.btor");
+}
+
+/// `implies` is never emitted by yosys, so it is tested with inline BTOR.
+#[test]
+fn cosim_implies() {
+    let src = "\
+1 sort bitvec 4
+2 sort bitvec 1
+3 input 1 a
+4 input 1 b
+5 state 2 r
+6 ugt 2 3 4
+7 ult 2 3 4
+8 implies 2 6 7
+9 next 2 5 8
+10 bad 5
+";
+    let mut ctx = Context::default();
+    let sys = btor2::parse_str(&mut ctx, src, Some("Implies")).unwrap();
+    cosim("implies", &ctx, &sys);
+}
+
+/// yosys never emits whole-array `eq`, so array equality is tested with inline BTOR:
+/// two zero-initialized memories receive identical writes; bad if they differ.
+#[test]
+fn cosim_array_equal_inline() {
+    let src = "\
+1 sort bitvec 2
+2 sort bitvec 4
+3 sort array 1 2
+4 sort bitvec 1
+5 input 1 a
+6 input 2 d
+7 const 2 0000
+8 state 3 m1
+9 state 3 m2
+10 init 3 8 7
+11 init 3 9 7
+12 write 3 8 5 6
+13 write 3 9 5 6
+14 next 3 8 12
+15 next 3 9 13
+16 eq 4 8 9
+17 not 4 16
+18 bad 17
+";
+    let mut ctx = Context::default();
+    let sys = btor2::parse_str(&mut ctx, src, Some("ArrayEqualInline")).unwrap();
+    cosim("array_equal_inline", &ctx, &sys);
 }

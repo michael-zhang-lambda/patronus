@@ -7,7 +7,7 @@ expression: lean
 import HwFormal.TransSys
 import HwFormal.BVArray
 
-namespace array_equal
+namespace ArrayEqual
 
 structure State where
   mk ::
@@ -16,24 +16,25 @@ structure State where
 
 structure Input where
   mk ::
-  «a» : BitVec 2
   «d» : BitVec 4
+  «a» : BitVec 2
+  «clk» : BitVec 1
 
-def array_equal_sys : TransSys State Input State := {
+def ArrayEqual_sys : TransSys State Input State := {
   init := fun (o : State) (i : Input) => {
     «m1» := (BVArray.const (iw := 2) 0#4)
     «m2» := (BVArray.const (iw := 2) 0#4)
   },
   next := fun (s : State) (i : Input) => {
-    «m1» := (BVArray.write s.«m1» i.«a» i.«d»)
-    «m2» := (BVArray.write s.«m2» i.«a» i.«d»)
+    «m1» := (if ((~~~(BitVec.ofBool (15#4 == 0#4))) == 1#1) then (BVArray.write s.«m1» i.«a» ((i.«d» &&& 15#4) ||| ((BVArray.read s.«m1» i.«a») &&& (~~~15#4)))) else s.«m1»)
+    «m2» := (if ((~~~(BitVec.ofBool (15#4 == 0#4))) == 1#1) then (BVArray.write s.«m2» i.«a» ((i.«d» &&& 15#4) ||| ((BVArray.read s.«m2» i.«a») &&& (~~~15#4)))) else s.«m2»)
   },
   constraint := fun _ _ => true,
   bad := fun (s : State) (i : Input) => (
-    false || (~~~((BitVec.ofBool (BVArray.equals s.«m1» s.«m2»))) == 1#1)
+    false || ((1#1 &&& (~~~((((BitVec.ofBool ((BVArray.read s.«m1» 0#2) == (BVArray.read s.«m2» 0#2))) &&& (BitVec.ofBool ((BVArray.read s.«m1» 1#2) == (BVArray.read s.«m2» 1#2)))) &&& (BitVec.ofBool ((BVArray.read s.«m1» 2#2) == (BVArray.read s.«m2» 2#2)))) &&& (BitVec.ofBool ((BVArray.read s.«m1» 3#2) == (BVArray.read s.«m2» 3#2)))))) == 1#1)
   ),
 }
 
-theorem array_equal_safe : array_equal_sys.safe := by sorry
+theorem ArrayEqual_safe : ArrayEqual_sys.safe := by sorry
 
-end array_equal
+end ArrayEqual

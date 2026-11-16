@@ -94,14 +94,16 @@ fn translate_expr(
                 translate_expr(ctx, *a, state_names, input_names),
                 translate_expr(ctx, *b, state_names, input_names),
             );
-            format!("({a_str} / {b_str})")
+            // SMT-LIB semantics: division by zero yields all ones (Lean's `/` yields 0)
+            format!("(BitVec.smtUDiv {a_str} {b_str})")
         }
         Expr::BVSignedDiv(a, b, _) => {
             let (a_str, b_str) = (
                 translate_expr(ctx, *a, state_names, input_names),
                 translate_expr(ctx, *b, state_names, input_names),
             );
-            format!("(BitVec.sdiv {a_str} {b_str})")
+            // SMT-LIB semantics for division by zero (Lean's `sdiv` yields 0)
+            format!("(BitVec.smtSDiv {a_str} {b_str})")
         }
         Expr::BVSignedMod(a, b, _) => {
             let (a_str, b_str) = (
@@ -115,14 +117,14 @@ fn translate_expr(
                 translate_expr(ctx, *a, state_names, input_names),
                 translate_expr(ctx, *b, state_names, input_names),
             );
-            format!("(BitVec.smod {a_str} {b_str})")
+            format!("(BitVec.umod {a_str} {b_str})")
         }
         Expr::BVSignedRem(a, b, _) => {
             let (a_str, b_str) = (
                 translate_expr(ctx, *a, state_names, input_names),
                 translate_expr(ctx, *b, state_names, input_names),
             );
-            format!("({a_str} % {b_str})")
+            format!("(BitVec.srem {a_str} {b_str})")
         }
         Expr::BVEqual(a, b) => {
             let (a_str, b_str) = (
@@ -171,7 +173,8 @@ fn translate_expr(
                 translate_expr(ctx, *e, state_names, input_names),
                 translate_expr(ctx, *shamt, state_names, input_names),
             );
-            format!("({e_str} >>> ({shamt_str}).toNat)")
+            // NOTE: `>>>` on `BitVec` is a logical shift in Lean
+            format!("(BitVec.sshiftRight {e_str} ({shamt_str}).toNat)")
         }
         Expr::BVGreater(a, b) => {
             let (a_str, b_str) = (
@@ -222,11 +225,11 @@ fn translate_expr(
         }
         Expr::BVNot(e, _) => {
             let e_str = translate_expr(ctx, *e, state_names, input_names);
-            format!("~~~({e_str})")
+            format!("(~~~{e_str})")
         }
         Expr::BVNegate(e, _) => {
             let e_str = translate_expr(ctx, *e, state_names, input_names);
-            format!("-({e_str})")
+            format!("(-{e_str})")
         }
         Expr::BVArrayRead { array, index, .. } => {
             let (a_str, i_str) = (

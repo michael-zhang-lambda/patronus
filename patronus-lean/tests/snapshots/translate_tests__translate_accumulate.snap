@@ -31,7 +31,7 @@ def Accumulate_sys : TransSys State Input State := {
   },
   constraint := fun _ _ => true,
   bad := fun (s : State) (i : Input) => (
-    false || ((1#1 &&& ~~~((BitVec.ofBool (s.«x» == s.«y»)))) == 1#1)
+    false || ((1#1 &&& (~~~(BitVec.ofBool (s.«x» == s.«y»)))) == 1#1)
   ),
 }
 

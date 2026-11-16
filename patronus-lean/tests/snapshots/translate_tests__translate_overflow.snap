@@ -26,7 +26,7 @@ def Overflow_sys : TransSys State Input State := {
   },
   constraint := fun _ _ => true,
   bad := fun (s : State) (i : Input) => (
-    false || ((1#1 &&& ~~~(~~~((BitVec.ofBool (s.«count» == 0#2))))) == 1#1)
+    false || ((1#1 &&& (~~~(~~~(BitVec.ofBool (s.«count» == 0#2))))) == 1#1)
   ),
 }
 

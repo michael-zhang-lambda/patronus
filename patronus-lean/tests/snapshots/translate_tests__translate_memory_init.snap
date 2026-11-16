@@ -28,11 +28,11 @@ def MemoryInit_sys : TransSys State Input State := {
     «mem» := (BVArray.const (iw := 2) 0#4)
   },
   next := fun (s : State) (i : Input) => {
-    «mem» := (if (~~~((BitVec.ofBool ((if (i.«we» == 1#1) then 15#4 else 0#4) == 0#4))) == 1#1) then (BVArray.write s.«mem» (if (i.«we» == 1#1) then i.«wa» else i.«_input_0») (((if (i.«we» == 1#1) then (i.«wd» &&& 7#4) else i.«_input_1») &&& (if (i.«we» == 1#1) then 15#4 else 0#4)) ||| ((BVArray.read s.«mem» (if (i.«we» == 1#1) then i.«wa» else i.«_input_0»)) &&& ~~~((if (i.«we» == 1#1) then 15#4 else 0#4))))) else s.«mem»)
+    «mem» := (if ((~~~(BitVec.ofBool ((if (i.«we» == 1#1) then 15#4 else 0#4) == 0#4))) == 1#1) then (BVArray.write s.«mem» (if (i.«we» == 1#1) then i.«wa» else i.«_input_0») (((if (i.«we» == 1#1) then (i.«wd» &&& 7#4) else i.«_input_1») &&& (if (i.«we» == 1#1) then 15#4 else 0#4)) ||| ((BVArray.read s.«mem» (if (i.«we» == 1#1) then i.«wa» else i.«_input_0»)) &&& (~~~(if (i.«we» == 1#1) then 15#4 else 0#4))))) else s.«mem»)
   },
   constraint := fun _ _ => true,
   bad := fun (s : State) (i : Input) => (
-    false || ((1#1 &&& ~~~(~~~((BitVec.ofBool ((BVArray.read s.«mem» i.«ra») > 7#4))))) == 1#1)
+    false || ((1#1 &&& (~~~(~~~(BitVec.ofBool (BitVec.ult 7#4 (BVArray.read s.«mem» i.«ra»)))))) == 1#1)
   ),
 }
 
