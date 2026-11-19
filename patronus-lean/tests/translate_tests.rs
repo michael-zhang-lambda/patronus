@@ -172,30 +172,14 @@ fn translate_array_equal_inline() {
     insta::assert_snapshot!(lean);
 }
 
-/// Inline BTOR with two constraints: one over an input only, one mixing state and input.
-const CONSTRAINT_SRC: &str = "\
-1 sort bitvec 4
-2 sort bitvec 1
-3 input 1 a
-4 state 1 x
-5 const 1 0000
-6 init 1 4 5
-7 add 1 4 3
-8 next 1 4 7
-9 const 1 0011
-10 ult 2 3 9
-11 constraint 10
-12 ulte 2 4 7
-13 constraint 12
-14 const 1 1111
-15 eq 2 4 14
-16 bad 15
-";
-
 /// Inline BTOR with states that have an `init` but no `next` (one named, one unnamed).
 /// The BTOR2 parser only demotes states with neither `init` nor `next` to inputs, so these
 /// reach the translator as states: they keep their `init` and get a `$next` input that
 /// supplies their value in the following cycle.
+///
+/// This has to be inline BTOR: yosys never emits such a state. A register with an init value
+/// that is never assigned is folded into a constant, and one assigned an undriven wire, `'x` or
+/// an `anyseq` value gets `next` = a fresh input instead (which is what this encoding mirrors).
 const NO_NEXT_SRC: &str = "\
 1 sort bitvec 4
 2 sort bitvec 1
@@ -217,8 +201,7 @@ const NO_NEXT_SRC: &str = "\
 
 #[test]
 fn translate_constraint() {
-    let mut ctx = patronus::expr::Context::default();
-    let sys = btor2::parse_str(&mut ctx, CONSTRAINT_SRC, Some("Constraint")).unwrap();
+    let (ctx, sys) = btor2::parse_file("../inputs/verilog_tests/Constraint.btor").unwrap();
     assert_eq!(sys.constraints.len(), 2);
     let lean = patronus_lean::translate_to_str(&ctx, &sys);
     // constraint body references `s` and `i`, so the lambda must bind them
@@ -229,8 +212,7 @@ fn translate_constraint() {
 
 #[test]
 fn translate_no_constraint_is_true() {
-    let mut ctx = patronus::expr::Context::default();
-    let sys = btor2::parse_str(&mut ctx, NO_NEXT_SRC, Some("NoNext")).unwrap();
+    let (ctx, sys) = btor2::parse_file("../inputs/verilog_tests/Overflow.btor").unwrap();
     assert!(sys.constraints.is_empty());
     let lean = patronus_lean::translate_to_str(&ctx, &sys);
     assert!(lean.contains("constraint := fun (s : State) (i : Input) => (\n    true\n  ),"));

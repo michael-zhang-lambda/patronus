@@ -308,36 +308,19 @@ fn cosim_array_equal_inline() {
     cosim("array_equal_inline", &ctx, &sys);
 }
 
-/// Constraints over an input and over state+input; the `constraint=` column of the trace
-/// must agree between the interpreter and Lean.
+/// Constraints over an input and over state+input (from `assume`); the `constraint=` column of
+/// the trace must agree between the interpreter and Lean.
 #[test]
 fn cosim_constraint() {
-    let src = "\
-1 sort bitvec 4
-2 sort bitvec 1
-3 input 1 a
-4 state 1 x
-5 const 1 0000
-6 init 1 4 5
-7 add 1 4 3
-8 next 1 4 7
-9 const 1 0011
-10 ult 2 3 9
-11 constraint 10
-12 ulte 2 4 7
-13 constraint 12
-14 const 1 1111
-15 eq 2 4 14
-16 bad 15
-";
-    let mut ctx = Context::default();
-    let sys = btor2::parse_str(&mut ctx, src, Some("Constraint")).unwrap();
-    cosim("constraint", &ctx, &sys);
+    cosim_file("constraint", "../inputs/verilog_tests/Constraint.btor");
 }
 
 /// States with `init` but without `next` (named and unnamed): their `init` holds in cycle 0,
 /// afterwards their value comes from the previous cycle's `$next` input. One of them is used
 /// in a constraint.
+///
+/// Inline BTOR because yosys never emits a state with `init` but no `next` (see the comment on
+/// `NO_NEXT_SRC` in `translate_tests.rs`).
 #[test]
 fn cosim_no_next_state() {
     let src = "\

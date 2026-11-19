@@ -16,6 +16,7 @@ structure State where
 structure Input where
   mk ::
   «a» : BitVec 4
+  «clk» : BitVec 1
 
 def Constraint_sys : TransSys State Input State := {
   init := fun (o : State) (i : Input) => {
@@ -25,10 +26,10 @@ def Constraint_sys : TransSys State Input State := {
     «x» := (s.«x» + i.«a»)
   },
   constraint := fun (s : State) (i : Input) => (
-    true && ((BitVec.ofBool (BitVec.ult i.«a» 3#4)) == 1#1) && ((BitVec.ofBool (BitVec.ule s.«x» (s.«x» + i.«a»))) == 1#1)
+    true && (((BitVec.ofBool (BitVec.ult i.«a» 3#4)) ||| (~~~1#1)) == 1#1) && (((BitVec.ofBool (BitVec.ule s.«x» (s.«x» + i.«a»))) ||| (~~~1#1)) == 1#1)
   ),
   bad := fun (s : State) (i : Input) => (
-    false || ((BitVec.ofBool (s.«x» == 15#4)) == 1#1)
+    false || ((1#1 &&& (~~~(~~~(BitVec.ofBool (s.«x» == 15#4))))) == 1#1)
   ),
 }
 
