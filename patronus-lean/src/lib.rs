@@ -386,8 +386,14 @@ fn translate_system(
     }
     writeln!(out, "  }},")?;
 
-    // NOTE: constraints are ignored for now
-    writeln!(out, "  constraint := fun _ _ => true,")?;
+    writeln!(out, "  constraint := fun _ _ => (")?;
+    write!(out, "    true")?;
+    for &cons in sys.constraints.iter() {
+        let cons_str = translate_expr(ctx, cons, &("s", &state_set), &("i", &input_names));
+        write!(out, " && ({cons_str} == 1#1)")?;
+    }
+    writeln!(out)?;
+    writeln!(out, "),")?;
 
     writeln!(out, "  bad := fun (s : State) (i : Input) => (")?;
     write!(out, "    false")?;
