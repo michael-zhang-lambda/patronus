@@ -307,3 +307,60 @@ fn cosim_array_equal_inline() {
     let sys = btor2::parse_str(&mut ctx, src, Some("ArrayEqualInline")).unwrap();
     cosim("array_equal_inline", &ctx, &sys);
 }
+
+/// Constraints over an input and over state+input; the `constraint=` column of the trace
+/// must agree between the interpreter and Lean.
+#[test]
+fn cosim_constraint() {
+    let src = "\
+1 sort bitvec 4
+2 sort bitvec 1
+3 input 1 a
+4 state 1 x
+5 const 1 0000
+6 init 1 4 5
+7 add 1 4 3
+8 next 1 4 7
+9 const 1 0011
+10 ult 2 3 9
+11 constraint 10
+12 ulte 2 4 7
+13 constraint 12
+14 const 1 1111
+15 eq 2 4 14
+16 bad 15
+";
+    let mut ctx = Context::default();
+    let sys = btor2::parse_str(&mut ctx, src, Some("Constraint")).unwrap();
+    cosim("constraint", &ctx, &sys);
+}
+
+/// States with `init` but without `next` (named and unnamed): their `init` holds in cycle 0,
+/// afterwards their value comes from the previous cycle's `$next` input. One of them is used
+/// in a constraint.
+#[test]
+fn cosim_no_next_state() {
+    let src = "\
+1 sort bitvec 4
+2 sort bitvec 1
+3 input 1 a
+4 state 1 x
+5 state 1 free
+6 state 2
+7 add 1 4 3
+8 next 1 4 7
+9 add 1 4 5
+10 ugt 2 9 4
+11 and 2 10 6
+12 bad 11
+13 ugt 2 5 3
+14 constraint 13
+15 const 1 0101
+16 init 1 5 15
+17 const 2 1
+18 init 2 6 17
+";
+    let mut ctx = Context::default();
+    let sys = btor2::parse_str(&mut ctx, src, Some("NoNext")).unwrap();
+    cosim("no_next_state", &ctx, &sys);
+}

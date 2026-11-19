@@ -27,7 +27,9 @@ def Swap_sys : TransSys State Input State := {
     «a» := s.«b»
     «b» := s.«a»
   },
-  constraint := fun _ _ => true,
+  constraint := fun (s : State) (i : Input) => (
+    true
+  ),
   bad := fun (s : State) (i : Input) => (
     false || ((1#1 &&& (~~~(~~~(BitVec.ofBool (s.«a» == s.«b»))))) == 1#1)
   ),

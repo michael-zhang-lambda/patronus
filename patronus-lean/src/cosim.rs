@@ -8,6 +8,7 @@
 //! `name=<decimal> ...` for every state, sorted by name, followed by ` bad=<0|1>` for
 //! steps `0 .. n-1` (where `bad s_k i_k` is defined). The final state line has no `bad`.
 
+use crate::utils::{escape_name, no_next_state_set};
 use crate::{signal_names, translate_to_str};
 use baa::{ArrayOps, ArrayValue, BitVecOps, BitVecValue, Value};
 use patronus::expr::{Context, Type, TypeCheck};
@@ -142,17 +143,31 @@ pub fn rust_states(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Vec<
         debug_assert_eq!(val_to_string(&sim.get(state.symbol)), val_to_string(value));
     }
 
+    // A state without `next` is keyed by its own symbol in `inputs` (its `$next` input). The
+    // interpreter holds such a state's value across `step`, so its `$next` value from cycle k is
+    // written into the state *after* stepping, matching Lean's `next := i.«x$next»`.
+    let next_less = no_next_state_set(sys);
+    let set = |sim: &mut Interpreter, expr, value: &Value| match value {
+        Value::BitVec(bv) => sim.set(expr, bv),
+        Value::Array(av) => sim.set_array(expr, av.clone()),
+    };
+
     let mut lines = Vec::with_capacity(trace.inputs.len() + 1);
     for (cycle, step_inputs) in trace.inputs.iter().enumerate() {
+        assert_eq!(inputs.len(), step_inputs.len(), "trace inputs do not match system inputs");
         for ((expr, name), (iname, value)) in inputs.iter().zip(step_inputs.iter()) {
             assert_eq!(name, iname, "trace inputs do not match system inputs");
-            match value {
-                Value::BitVec(bv) => sim.set(*expr, bv),
-                Value::Array(av) => sim.set_array(*expr, av.clone()),
+            if !next_less.contains(expr) {
+                set(&mut sim, *expr, value);
             }
         }
         lines.push(trace_line(cycle as u64, sys, &sim));
         sim.step();
+        for ((expr, _), (_, value)) in inputs.iter().zip(step_inputs.iter()) {
+            if next_less.contains(expr) {
+                set(&mut sim, *expr, value);
+            }
+        }
     }
     lines
 }
@@ -163,7 +178,7 @@ fn lean_struct(fields: &[(String, Value)]) -> String {
     }
     let body = fields
         .iter()
-        .map(|(name, v)| format!("{name} := {}", val_to_lean(v)))
+        .map(|(name, v)| format!("{} := {}", escape_name(name.clone()), val_to_lean(v)))
         .collect::<Vec<_>>()
         .join(", ");
     format!("{{ {body} }}")
@@ -202,9 +217,12 @@ pub fn lean_harness(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Str
     writeln!(w).unwrap();
     let line = sorted_states
         .iter()
-        .map(|(state, n)| match state.symbol.get_type(ctx) {
-            Type::BV(_) => format!("{n}={{s.{n}.toNat}}"),
-            Type::Array(_) => format!("{n}={{BVArray.toString s.{n}}}"),
+        .map(|(state, n)| {
+            let esc = escape_name(n.clone());
+            match state.symbol.get_type(ctx) {
+                Type::BV(_) => format!("{n}={{s.{esc}.toNat}}"),
+                Type::Array(_) => format!("{n}={{BVArray.toString s.{esc}}}"),
+            }
         })
         .collect::<Vec<_>>()
         .join(", ");

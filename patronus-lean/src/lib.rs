@@ -4,20 +4,14 @@
 
 use baa::BitVecOps;
 use patronus::expr::{Context, Expr, ExprRef, Type, TypeCheck};
-use patronus::system::{State, TransitionSystem};
-use rustc_hash::FxHashSet;
+use patronus::system::TransitionSystem;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub mod cosim;
+mod utils;
 use std::io::Write;
-
-const ESCAPE_L: &str = "«";
-const ESCAPE_R: &str = "»";
-
-/// Escape BTOR name `name` to Lean name
-#[inline]
-fn escape_name(name: String) -> String {
-    format!("{ESCAPE_L}{name}{ESCAPE_R}")
-}
+use utils::escape_name;
+pub use utils::{InputNames, StateNames, signal_names};
 
 /// Translate BTOR expression into Lean expression string
 fn translate_expr(
@@ -256,66 +250,6 @@ fn translate_expr(
     }
 }
 
-/// Lean field names of the states, in declaration order
-pub type StateNames = Vec<(State, String)>;
-/// Lean field names of the inputs, in declaration order
-pub type InputNames = Vec<(ExprRef, String)>;
-
-/// Assign a Lean field name to every state and input of `sys`, in declaration order
-///
-/// Signals with a symbol name keep it; unnamed ones get `state{n}` / `input{n}`
-pub fn signal_names(ctx: &Context, sys: &TransitionSystem) -> (StateNames, InputNames) {
-    let mut state_ct = 0u64;
-    let states = sys
-        .states
-        .iter()
-        .filter_map(|state| {
-            if state.next.is_some() {
-                let name = if let Some(name) = ctx.get_symbol_name(state.symbol) {
-                    name.to_string()
-                } else {
-                    let name = format!("state{state_ct}");
-                    state_ct += 1;
-                    name
-                };
-                Some((*state, name))
-            } else {
-                None
-            }
-        })
-        .collect();
-    let no_next_states: Vec<ExprRef> = sys
-        .states
-        .iter()
-        .filter_map(|state| {
-            if state.next.is_none() {
-                Some(state.symbol)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let mut input_ct = 0u64;
-    let inputs = sys
-        .inputs
-        .iter()
-        .chain(no_next_states.iter())
-        .map(|&input| {
-            let name = if let Some(name) = ctx.get_symbol_name(input) {
-                name.to_string()
-            } else {
-                let name = format!("input{input_ct}");
-                input_ct += 1;
-                name
-            };
-            (input, name)
-        })
-        .collect();
-
-    (states, inputs)
-}
-
 /// Translate stateful elements into Lean `structure` text
 fn translate_system(
     ctx: &Context,
@@ -356,6 +290,13 @@ fn translate_system(
 
     let input_names: FxHashSet<String> = input_list.iter().map(|(_, n)| n.clone()).collect();
     let state_set: FxHashSet<String> = state_names.iter().map(|(_, n)| n.clone()).collect();
+    // `$next` inputs of states without a transition, keyed by the state's symbol
+    let next_less = utils::no_next_state_set(sys);
+    let next_input_names: FxHashMap<ExprRef, String> = input_list
+        .iter()
+        .filter(|(e, _)| next_less.contains(e))
+        .cloned()
+        .collect();
 
     writeln!(out, "def {sys_name}_sys : TransSys State Input State := {{")?;
     writeln!(out, "  init := fun (o : State) (i : Input) => {{")?;
@@ -380,20 +321,21 @@ fn translate_system(
             let next_str = translate_expr(ctx, next, &("s", &state_set), &("i", &input_names));
             writeln!(out, "    {esc_name} := {next_str}")?;
         } else {
-            // State does not transition: preserve old state
-            writeln!(out, "    {esc_name} := s.{esc_name}")?;
+            // State has no transition: next value is chosen freely through its `$next` input
+            let next_input = escape_name(next_input_names[&state.symbol].clone());
+            writeln!(out, "    {esc_name} := i.{next_input}")?;
         }
     }
     writeln!(out, "  }},")?;
 
-    writeln!(out, "  constraint := fun _ _ => (")?;
+    writeln!(out, "  constraint := fun (s : State) (i : Input) => (")?;
     write!(out, "    true")?;
     for &cons in sys.constraints.iter() {
         let cons_str = translate_expr(ctx, cons, &("s", &state_set), &("i", &input_names));
         write!(out, " && ({cons_str} == 1#1)")?;
     }
     writeln!(out)?;
-    writeln!(out, "),")?;
+    writeln!(out, "  ),")?;
 
     writeln!(out, "  bad := fun (s : State) (i : Input) => (")?;
     write!(out, "    false")?;

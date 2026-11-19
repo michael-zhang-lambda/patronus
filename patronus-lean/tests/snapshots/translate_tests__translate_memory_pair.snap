@@ -35,7 +35,9 @@ def MemoryPair_sys : TransSys State Input State := {
     «mem_a» := (if ((~~~(BitVec.ofBool ((if (i.«we» == 1#1) then 15#4 else 0#4) == 0#4))) == 1#1) then (BVArray.write s.«mem_a» (if (i.«we» == 1#1) then i.«wa» else i.«_input_0») (((if (i.«we» == 1#1) then i.«wd» else i.«_input_1») &&& (if (i.«we» == 1#1) then 15#4 else 0#4)) ||| ((BVArray.read s.«mem_a» (if (i.«we» == 1#1) then i.«wa» else i.«_input_0»)) &&& (~~~(if (i.«we» == 1#1) then 15#4 else 0#4))))) else s.«mem_a»)
     «mem_b» := (if ((~~~(BitVec.ofBool ((if (i.«we» == 1#1) then 15#4 else 0#4) == 0#4))) == 1#1) then (BVArray.write s.«mem_b» (if (i.«we» == 1#1) then i.«wa» else i.«_input_2») (((if (i.«we» == 1#1) then i.«wd» else i.«_input_3») &&& (if (i.«we» == 1#1) then 15#4 else 0#4)) ||| ((BVArray.read s.«mem_b» (if (i.«we» == 1#1) then i.«wa» else i.«_input_2»)) &&& (~~~(if (i.«we» == 1#1) then 15#4 else 0#4))))) else s.«mem_b»)
   },
-  constraint := fun _ _ => true,
+  constraint := fun (s : State) (i : Input) => (
+    true
+  ),
   bad := fun (s : State) (i : Input) => (
     false || ((1#1 &&& (~~~(BitVec.ofBool ((BVArray.read s.«mem_a» i.«ra») == (BVArray.read s.«mem_b» i.«ra»))))) == 1#1)
   ),

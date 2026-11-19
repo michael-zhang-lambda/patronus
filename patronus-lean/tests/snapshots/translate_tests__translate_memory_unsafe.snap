@@ -29,7 +29,9 @@ def MemoryUnsafe_sys : TransSys State Input State := {
   next := fun (s : State) (i : Input) => {
     «mem» := (if ((~~~(BitVec.ofBool ((if (i.«we» == 1#1) then 15#4 else 0#4) == 0#4))) == 1#1) then (BVArray.write s.«mem» (if (i.«we» == 1#1) then i.«wa» else i.«_input_0») (((if (i.«we» == 1#1) then i.«wd» else i.«_input_1») &&& (if (i.«we» == 1#1) then 15#4 else 0#4)) ||| ((BVArray.read s.«mem» (if (i.«we» == 1#1) then i.«wa» else i.«_input_0»)) &&& (~~~(if (i.«we» == 1#1) then 15#4 else 0#4))))) else s.«mem»)
   },
-  constraint := fun _ _ => true,
+  constraint := fun (s : State) (i : Input) => (
+    true
+  ),
   bad := fun (s : State) (i : Input) => (
     false || ((1#1 &&& (~~~(~~~(BitVec.ofBool ((BVArray.read s.«mem» 3#2) == 15#4))))) == 1#1)
   ),

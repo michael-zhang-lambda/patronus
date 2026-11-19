@@ -38,7 +38,9 @@ def Memory_sys : TransSys State Input State := {
     «last_addr» := (if (i.«we» == 1#1) then i.«wa» else s.«last_addr»)
     «last_data» := (if (i.«we» == 1#1) then i.«wd» else s.«last_data»)
   },
-  constraint := fun _ _ => true,
+  constraint := fun (s : State) (i : Input) => (
+    true
+  ),
   bad := fun (s : State) (i : Input) => (
     false || ((1#1 &&& (~~~((~~~s.«valid») ||| (BitVec.ofBool ((BVArray.read s.«mem» s.«last_addr») == s.«last_data»))))) == 1#1)
   ),

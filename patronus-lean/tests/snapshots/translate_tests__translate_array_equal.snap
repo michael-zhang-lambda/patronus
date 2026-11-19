@@ -29,7 +29,9 @@ def ArrayEqual_sys : TransSys State Input State := {
     «m1» := (if ((~~~(BitVec.ofBool (15#4 == 0#4))) == 1#1) then (BVArray.write s.«m1» i.«a» ((i.«d» &&& 15#4) ||| ((BVArray.read s.«m1» i.«a») &&& (~~~15#4)))) else s.«m1»)
     «m2» := (if ((~~~(BitVec.ofBool (15#4 == 0#4))) == 1#1) then (BVArray.write s.«m2» i.«a» ((i.«d» &&& 15#4) ||| ((BVArray.read s.«m2» i.«a») &&& (~~~15#4)))) else s.«m2»)
   },
-  constraint := fun _ _ => true,
+  constraint := fun (s : State) (i : Input) => (
+    true
+  ),
   bad := fun (s : State) (i : Input) => (
     false || ((1#1 &&& (~~~((((BitVec.ofBool ((BVArray.read s.«m1» 0#2) == (BVArray.read s.«m2» 0#2))) &&& (BitVec.ofBool ((BVArray.read s.«m1» 1#2) == (BVArray.read s.«m2» 1#2)))) &&& (BitVec.ofBool ((BVArray.read s.«m1» 2#2) == (BVArray.read s.«m2» 2#2)))) &&& (BitVec.ofBool ((BVArray.read s.«m1» 3#2) == (BVArray.read s.«m2» 3#2)))))) == 1#1)
   ),
