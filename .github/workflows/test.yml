@@ -339,6 +339,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          # hw-formal (the Lean library the generated models import) is a submodule
+          submodules: true
       - name: Set Up Lean and build hw-formal
         # installs elan + the toolchain from lean-toolchain, puts `lake` on PATH, runs `lake build`
         uses: leanprover/lean-action@v1
