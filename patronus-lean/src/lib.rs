@@ -269,15 +269,30 @@ pub fn signal_names(ctx: &Context, sys: &TransitionSystem) -> (StateNames, Input
     let states = sys
         .states
         .iter()
-        .map(|state| {
-            let name = if let Some(name) = ctx.get_symbol_name(state.symbol) {
-                name.to_string()
+        .filter_map(|state| {
+            if state.next.is_some() {
+                let name = if let Some(name) = ctx.get_symbol_name(state.symbol) {
+                    name.to_string()
+                } else {
+                    let name = format!("state{state_ct}");
+                    state_ct += 1;
+                    name
+                };
+                Some((*state, name))
             } else {
-                let name = format!("state{state_ct}");
-                state_ct += 1;
-                name
-            };
-            (*state, name)
+                None
+            }
+        })
+        .collect();
+    let no_next_states: Vec<ExprRef> = sys
+        .states
+        .iter()
+        .filter_map(|state| {
+            if state.next.is_none() {
+                Some(state.symbol)
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -285,6 +300,7 @@ pub fn signal_names(ctx: &Context, sys: &TransitionSystem) -> (StateNames, Input
     let inputs = sys
         .inputs
         .iter()
+        .chain(no_next_states.iter())
         .map(|&input| {
             let name = if let Some(name) = ctx.get_symbol_name(input) {
                 name.to_string()
