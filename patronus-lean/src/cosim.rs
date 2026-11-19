@@ -5,8 +5,8 @@
 //! producing comparable canonical text lines.
 //!
 //! Canonical line format (one per step `k`, for states `s_0 .. s_n`):
-//! `name=<decimal> ...` for every state, sorted by name, followed by ` bad=<0|1>` for
-//! steps `0 .. n-1` (where `bad s_k i_k` is defined). The final state line has no `bad`.
+//! cycle number, `name=<decimal> ...` for every state, sorted by name, followed by ` bad=<0|1>` and ` constraint=<0|1>` for
+//! steps `0 .. n-1` (where `bad s_k i_k` is defined).
 
 use crate::utils::{escape_name, no_next_state_set};
 use crate::{signal_names, translate_to_str};
@@ -154,7 +154,11 @@ pub fn rust_states(ctx: &Context, sys: &TransitionSystem, trace: &Trace) -> Vec<
 
     let mut lines = Vec::with_capacity(trace.inputs.len() + 1);
     for (cycle, step_inputs) in trace.inputs.iter().enumerate() {
-        assert_eq!(inputs.len(), step_inputs.len(), "trace inputs do not match system inputs");
+        assert_eq!(
+            inputs.len(),
+            step_inputs.len(),
+            "trace inputs do not match system inputs"
+        );
         for ((expr, name), (iname, value)) in inputs.iter().zip(step_inputs.iter()) {
             assert_eq!(name, iname, "trace inputs do not match system inputs");
             if !next_less.contains(expr) {
